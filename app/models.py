@@ -24,7 +24,10 @@ class Scan(Base):
     size: Mapped[int] = mapped_column(Integer)
     file_type: Mapped[str] = mapped_column(String(128))
     magic_hex: Mapped[str] = mapped_column(String(64))
-    verdict: Mapped[str] = mapped_column(String(16))  # "clean" | "infected" (any engine)
+    verdict: Mapped[str] = mapped_column(
+        String(16)
+    )  # "clean" | "infected" (any engine); "pending" while scanning
+    status: Mapped[str] = mapped_column(String(16), default="done")  # "pending" | "done"
     signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
     engine: Mapped[str] = mapped_column(String(128))  # primary engine (ClamAV)
     urls: Mapped[list[str]] = mapped_column(JSON, default=list)

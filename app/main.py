@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
@@ -22,7 +22,7 @@ from app.analysis import (
     sniff_file_type,
 )
 from app.config import settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import Scan
 from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
 
@@ -118,6 +118,7 @@ def _scan_and_store(
         file_type=file_type,
         magic_hex=magic_hex,
         verdict=verdict,
+        status="done",
         signature=signature,
         engine=result.engine,
         urls=extract_urls(data),
@@ -145,20 +146,65 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     return templates.TemplateResponse(request, "index.html", {"recent": recent})
 
 
+def _run_scan(data: bytes, file_name: str) -> None:
+    """Background task: scan with all engines and mark the row done."""
+    with SessionLocal() as db:
+        _scan_and_store(db, get_scanner(), data, file_name, rescan=True)
+
+
+def _enqueue_scan(
+    background_tasks: BackgroundTasks, db: Session, data: bytes, file_name: str, rescan: bool
+) -> tuple[Scan, bool]:
+    """Return a cached done-row or enqueue an async scan. Returns (scan, was_cached)."""
+    hashes = compute_hashes(data)
+    existing = db.get(Scan, hashes["sha256"])
+    if existing and existing.status == "done" and not rescan:
+        return existing, True
+    file_type, magic_hex = sniff_file_type(data)
+    if existing:
+        existing.status = "pending"
+        existing.verdict = "pending"
+        existing.file_name = file_name
+        scan = existing
+    else:
+        scan = Scan(
+            sha256=hashes["sha256"],
+            md5=hashes["md5"],
+            sha1=hashes["sha1"],
+            file_name=file_name,
+            size=len(data),
+            file_type=file_type,
+            magic_hex=magic_hex,
+            verdict="pending",
+            status="pending",
+            engine="pending",
+            urls=[],
+        )
+        db.add(scan)
+    db.commit()
+    (Path(settings.upload_dir) / scan.sha256).write_bytes(data)
+    background_tasks.add_task(_run_scan, data, file_name)
+    return scan, False
+
+
 @app.post("/file/upload")
 async def upload(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     rescan: bool = False,
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),
-) -> RedirectResponse:
+    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+) -> JSONResponse:
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
     if len(data) > settings.max_upload_size:
         raise HTTPException(status_code=413, detail="file too large")
-    scan, _ = _scan_and_store(db, scanner, data, file.filename or "upload.bin", rescan)
-    return RedirectResponse(f"/file/{scan.sha256}", status_code=303)
+    scan, cached = _enqueue_scan(background_tasks, db, data, file.filename or "upload.bin", rescan)
+    return JSONResponse(
+        status_code=200 if cached else 202,
+        content={"sha256": scan.sha256, "status": scan.status, "cached": cached},
+    )
 
 
 @app.get("/file/{hash_value}", response_class=HTMLResponse)
@@ -170,9 +216,14 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         )
     stored = Path(settings.upload_dir) / scan.sha256
     entropy = shannon_entropy(stored.read_bytes()) if stored.exists() else 0.0
+    pending = scan.status != "done"
     # "relationships": other scans in the local DB sharing any IOC (VT-like, fully local)
     relations: list[tuple[Scan, list[str]]] = []
-    my_iocs = {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
+    my_iocs = (
+        {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
+        if not pending
+        else set()
+    )
     if my_iocs:
         for other in db.execute(select(Scan).where(Scan.sha256 != scan.sha256)).scalars():
             shared = sorted(
@@ -184,7 +235,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     return templates.TemplateResponse(
         request,
         "report.html",
-        {"scan": scan, "entropy": entropy, "relations": relations[:10]},
+        {"scan": scan, "entropy": entropy, "relations": relations[:10], "pending": pending},
     )
 
 
@@ -201,15 +252,15 @@ def download(hash_value: str, db: Session = Depends(get_db)) -> FileResponse:
 
 @app.post("/file/{hash_value}/rescan")
 def rescan(
+    background_tasks: BackgroundTasks,
     hash_value: str,
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),
 ) -> RedirectResponse:
     scan = _lookup(db, hash_value)
     stored = Path(settings.upload_dir) / scan.sha256 if scan else None
     if scan is None or stored is None or not stored.exists():
         raise HTTPException(status_code=404, detail="stored sample not found")
-    _scan_and_store(db, scanner, stored.read_bytes(), scan.file_name, rescan=True)
+    _enqueue_scan(background_tasks, db, stored.read_bytes(), scan.file_name, rescan=True)
     return RedirectResponse(f"/file/{scan.sha256}", status_code=303)
 
 
@@ -237,20 +288,22 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
 
 @app.post("/api/v2/files")
 async def api_scan(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),
+    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
 ) -> JSONResponse:
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})
-    scan, _ = _scan_and_store(db, scanner, data, file.filename or "upload.bin", rescan=False)
+    scan, cached = _enqueue_scan(background_tasks, db, data, file.filename or "upload.bin", False)
     return JSONResponse(
-        status_code=200,
+        status_code=200 if cached else 202,
         content={
             "sha256": scan.sha256,
             "md5": scan.md5,
             "sha1": scan.sha1,
+            "status": scan.status,
             "permalink": f"/file/{scan.sha256}",
         },
     )
@@ -272,6 +325,7 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
             "size": scan.size,
             "file_type": scan.file_type,
             "verdict": scan.verdict,
+            "status": scan.status,
             "signature": scan.signature,
             "engines": scan.engines,
             "urls": scan.urls,
