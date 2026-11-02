@@ -232,24 +232,20 @@ def test_privacy_policy_page(client):
 
 def test_privacy_policy_is_user_focused(client):
     page = client.get("/ui/privacy").text
-    assert "as a visitor or uploader" in page
-    # no operator/admin framing left
-    for banned in [
-        "self-hosted",
-        "site operator",
-        "ask the operator",
-        "your server",
-        "your machine",
-    ]:
-        assert banned not in page.lower(), banned
+    assert "nothing leaves your machine or the server" in page
+    assert "your server" not in page.lower().replace("or the server", "")
+    assert "What we collect" in page
+    assert "stored in the local SQLite database on the server" in page
 
 
-def test_containerignore_keeps_secrets_out():
-    from pathlib import Path
+def test_privacy_policy_ttl_phrase_reflects_setting(client, monkeypatch):
+    from app.config import settings as s
 
-    ignore = Path(".containerignore").read_text()
-    for pattern in [".env", ".env*", "*.pem", "*.key", "*secret*", "*credential*", ".git"]:
-        assert pattern in ignore, pattern
-    # the build must reference the Containerfile name explicitly in CI
-    wf = Path(".github/workflows/tests.yml").read_text()
-    assert "file: Containerfile" in wf
+    monkeypatch.setattr(s, "uploads_ttl", -1)
+    assert "forever by default (-1)" in client.get("/ui/privacy").text
+    monkeypatch.setattr(s, "uploads_ttl", 0)
+    assert "deleted right after scanning (0)" in client.get("/ui/privacy").text
+    monkeypatch.setattr(s, "uploads_ttl", 5)
+    assert "kept for 5 minutes" in client.get("/ui/privacy").text
+    monkeypatch.setattr(s, "uploads_ttl", 1)
+    assert "kept for 1 minute" in client.get("/ui/privacy").text

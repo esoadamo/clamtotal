@@ -41,9 +41,24 @@ jobs:
       - name: Run frontend JS tests
         run: node --test tests/js/app.test.mjs
 
+  sast:
+    name: SAST — vulnerability scan of locked dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Export locked requirements
+        run: uv export --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/reqs.txt
+
+      - name: pip-audit (OSV) — fail on any known vulnerability
+        run: uvx pip-audit --requirement /tmp/reqs.txt --strict
+
   build-image:
     name: Build and publish container image
-    needs: test
+    needs: [test, sast]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

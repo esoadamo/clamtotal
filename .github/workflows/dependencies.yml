@@ -1,0 +1,45 @@
+name: update-dependencies
+
+on:
+  schedule:
+    # every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Upgrade all locked dependencies
+        run: uv lock --upgrade
+
+      - name: Verify the updated lockfile
+        run: |
+          uv sync --locked --all-groups
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run ty check
+          uv run pytest
+          node --test tests/js/app.test.mjs
+          uv export --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/reqs.txt
+          uvx pip-audit --requirement /tmp/reqs.txt --strict
+
+      - name: Create pull request with updated dependencies
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "chore(deps): update locked dependencies"
+          body: |
+            Automated dependency update (`uv lock --upgrade`).
+
+            Verification run in this workflow: ruff, ty, alembic migrations,
+            unit tests (100% coverage gate), frontend JS tests, and pip-audit SAST.
+          branch: chore/update-dependencies
+          commit-message: "chore(deps): update locked dependencies"

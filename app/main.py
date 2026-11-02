@@ -344,7 +344,14 @@ def rescan(
 
 @app.get("/ui/privacy", response_class=HTMLResponse)
 def privacy(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "privacy.html")
+    ttl = settings.uploads_ttl
+    if ttl < 0:
+        ttl_phrase = "forever by default (-1)"
+    elif ttl == 0:
+        ttl_phrase = "deleted right after scanning (0)"
+    else:
+        ttl_phrase = f"kept for {ttl} minute{'s' if ttl != 1 else ''}"
+    return templates.TemplateResponse(request, "privacy.html", {"ttl_phrase": ttl_phrase})
 
 
 @app.get("/ui/search", response_class=HTMLResponse)

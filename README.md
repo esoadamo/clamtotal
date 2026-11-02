@@ -1,5 +1,7 @@
 # clamtotal
 
+> **Disclaimer:** this project was fully vibe coded with [Mistral Vibe](https://mistral.ai/vibe). Review the code before relying on it.
+
 A [VirusTotal](https://www.virustotal.com)-style web app that scans uploaded
 files with **ClamAV**. Fully airgapped: no external API calls, CDNs, or
 telemetry at runtime.
