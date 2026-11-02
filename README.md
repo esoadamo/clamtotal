@@ -11,8 +11,10 @@ Features (all fully offline, no login, no community features):
   **Details** (hashes, type, entropy), **Behavior** (PE/ELF/PDF/Office analysis,
   suspicious strings, archive contents), **Network** (URLs, domains, IPs,
   emails, registry keys, BTC addresses, punycode/IDN flags), **Embedded**
-  (recursively scanned archive members), **Relations** (other local files
-  sharing the same indicators)
+  (recursively scanned archive members), **Relations** (other local scans connected
+  by shared indicators, by archive membership in either direction — so a file uploaded
+  separately or packed inside another archive is linked to its containers — and by
+  alternative names tracked per hash, shown in Details as "Alternative names")
 - Scans via **clamd** (INSTREAM protocol) in the Podman container, or the
   **clamscan** CLI in local development (`CLAM_MODE=auto|daemon|cli`), plus a
   second engine: **local YARA rules** (`yara-python`, `YARA_RULES_DIR`)

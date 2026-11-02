@@ -68,3 +68,59 @@ def test_relations_tab_links_files_sharing_iocs(client):
     html = client.get(f"/ui/file/{sha_a}").text
     assert "Relations" in html
     assert "b.bin" in html
+
+
+def test_alternative_names_tracked_per_hash(client):
+    content = b"same content two names"
+    client.post("/file/upload", files={"file": ("first-name.bin", content)})
+    client.post("/file/upload", files={"file": ("second-name.exe", content)})
+    import hashlib
+
+    sha = hashlib.sha256(content).hexdigest()
+    api = client.get(f"/api/v2/files/{sha}").json()
+    assert api["names"] == ["first-name.bin", "second-name.exe"]
+    page = client.get(f"/ui/file/{sha}").text
+    assert "Alternative names" in page
+    assert "second-name.exe" in page
+
+
+def test_relations_connect_archive_and_members_by_hash(client):
+    import hashlib
+    import io
+    import zipfile
+
+    child_content = b"shared child payload http://203.0.113.7/deep"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("inner/payload.bin", child_content)
+    client.post("/file/upload", files={"file": ("outer.zip", buf.getvalue())})
+    archive_sha = hashlib.sha256(buf.getvalue()).hexdigest()
+    child_sha = hashlib.sha256(child_content).hexdigest()
+
+    # upload the child separately under a different name
+    client.post("/file/upload", files={"file": ("standalone.dat", child_content)})
+
+    child_page = client.get(f"/ui/file/{child_sha}").text
+    assert "Relations" in child_page
+    assert "embedded in outer.zip" in child_page
+
+    archive_page = client.get(f"/ui/file/{archive_sha}").text
+    assert "contained in this archive" in archive_page
+    assert "payload.bin" in archive_page  # child's first-seen name; standalone.dat is an alt name
+
+
+def test_second_archive_sharing_member_relates_archives(client):
+    import hashlib
+    import io
+    import zipfile
+
+    shared = b"common member content"
+    for name in ("pack-a.zip", "pack-b.zip"):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("shared.bin", shared)
+            zf.writestr(name, b"unique to " + name.encode())
+        client.post("/file/upload", files={"file": (name, buf.getvalue())})
+    shared_sha = hashlib.sha256(shared).hexdigest()
+    page = client.get(f"/ui/file/{shared_sha}").text
+    assert "pack-a.zip" in page and "pack-b.zip" in page

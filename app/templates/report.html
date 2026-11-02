@@ -84,6 +84,9 @@
     <h2 class="section-title">Basic information</h2>
     <dl class="kv">
       <dt>File name</dt><dd>{{ scan.file_name }}</dd>
+      {% if scan.names and scan.names | length > 1 %}
+      <dt>Alternative names</dt><dd>{{ (scan.names | reject('equalto', scan.file_name) | list) | join(", ") }}</dd>
+      {% endif %}
       <dt>File size</dt><dd>{{ scan.size }} bytes</dd>
       <dt>File type</dt><dd>{{ scan.file_type }}</dd>
       <dt>Magic</dt><dd class="mono">{{ scan.magic_hex }}</dd>
@@ -204,10 +207,10 @@
     <table>
       <thead><tr><th>File</th><th>Shared indicators</th><th>Detection</th></tr></thead>
       <tbody>
-        {% for other, shared in relations %}
+        {% for other, reasons in relations %}
         <tr>
           <td><a href="/ui/file/{{ other.sha256 }}">{{ other.file_name }}</a></td>
-          <td class="mono">{{ shared | join(", ") }}</td>
+          <td class="mono">{{ reasons | join(" · ") }}</td>
           <td><span class="badge {{ 'malicious' if other.verdict == 'infected' else 'harmless' }}">{{ other.verdict }}</span></td>
         </tr>
         {% endfor %}

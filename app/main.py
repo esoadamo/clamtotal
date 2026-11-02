@@ -163,6 +163,7 @@ def _scan_and_store(
         sha512=hashes["sha512"],
         crc32=hashes["crc32"],
         file_name=file_name,
+        names=sorted({file_name} | set((existing.names or []) if existing else [])),
         size=len(data),
         file_type=file_type,
         magic_hex=magic_hex,
@@ -219,12 +220,17 @@ def _enqueue_scan(
     hashes = compute_hashes(data)
     existing = db.get(Scan, hashes["sha256"])
     if existing and existing.status == "done" and not rescan:
+        if file_name not in (existing.names or []):  # record alternative names on cache hits
+            existing.names = sorted(set(existing.names or []) | {file_name})
+            db.commit()
         return existing, True
     file_type, magic_hex = sniff_file_type(data)
     if existing:
         existing.status = "pending"
         existing.verdict = "pending"
         existing.file_name = file_name
+        names = sorted(set(existing.names or []) | {file_name})
+        existing.names = names
         scan = existing
     else:
         scan = Scan(
@@ -232,6 +238,7 @@ def _enqueue_scan(
             md5=hashes["md5"],
             sha1=hashes["sha1"],
             file_name=file_name,
+            names=[file_name],
             size=len(data),
             file_type=file_type,
             magic_hex=magic_hex,
@@ -277,21 +284,26 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     stored = Path(settings.upload_dir) / scan.sha256
     entropy = shannon_entropy(stored.read_bytes()) if stored.exists() else 0.0
     pending = scan.status != "done"
-    # "relationships": other scans in the local DB sharing any IOC (VT-like, fully local)
+    # relations: shared IOCs + archive membership (this file embedded in another scan, or this
+    # archive containing other scans) — all resolved locally by hash, VT-style
     relations: list[tuple[Scan, list[str]]] = []
-    my_iocs = (
-        {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
-        if not pending
-        else set()
-    )
-    if my_iocs:
+    if not pending:
+        my_iocs = {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
+        my_embedded = {c["sha256"] for c in scan.embedded or []}
         for other in db.execute(select(Scan).where(Scan.sha256 != scan.sha256)).scalars():
+            reasons: list[str] = []
             shared = sorted(
                 {v for values in (other.iocs or {}).values() for v in values if isinstance(v, str)}
                 & my_iocs
             )
             if shared:
-                relations.append((other, shared[:5]))
+                reasons.append("shared indicators: " + ", ".join(shared[:3]))
+            if scan.sha256 in {c["sha256"] for c in other.embedded or []}:
+                reasons.append(f"embedded in {other.file_name}")
+            if other.sha256 in my_embedded:
+                reasons.append(f"contained in this archive ({other.file_name})")
+            if reasons:
+                relations.append((other, reasons))
     return templates.TemplateResponse(
         request,
         "report.html",
@@ -388,6 +400,7 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
             "sha512": scan.sha512,
             "crc32": scan.crc32,
             "file_name": scan.file_name,
+            "names": scan.names,
             "size": scan.size,
             "file_type": scan.file_type,
             "verdict": scan.verdict,

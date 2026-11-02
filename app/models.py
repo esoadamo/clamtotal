@@ -21,6 +21,9 @@ class Scan(Base):
     sha512: Mapped[str | None] = mapped_column(String(128), nullable=True)
     crc32: Mapped[str | None] = mapped_column(String(8), nullable=True)
     file_name: Mapped[str] = mapped_column(String(512))
+    names: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True
+    )  # alternative names seen for this hash
     size: Mapped[int] = mapped_column(Integer)
     file_type: Mapped[str] = mapped_column(String(128))
     magic_hex: Mapped[str] = mapped_column(String(64))
