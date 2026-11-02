@@ -23,7 +23,7 @@ def test_pending_report_page_shows_spinner_and_polls(client):
             )
         )
         db.commit()
-    page = client.get(f"/file/{sha}")
+    page = client.get(f"/ui/file/{sha}")
     assert page.status_code == 200
     assert "Scanning pending.bin" in page.text
     assert "setInterval" in page.text  # polls /api/v2/files/{sha} until done
@@ -60,4 +60,4 @@ def test_index_shows_pending_scan(client):
             )
         )
         db.commit()
-    assert "in-progress.bin" in client.get("/").text
+    assert "in-progress.bin" in client.get("/ui/").text

@@ -32,7 +32,7 @@ def test_iocs_and_behavior_in_report(client):
     assert any("185.220.101.4" in ip for ip in report["iocs"]["ips"])
     assert "powershell" in report["behavior"]["suspicious_strings"]
     assert report["sha512"] and len(report["sha512"]) == 128
-    html = client.get(f"/file/{sha256}").text
+    html = client.get(f"/ui/file/{sha256}").text
     assert "admin@evil-example.com" in html
     assert "Network" in html
 
@@ -56,7 +56,7 @@ def test_zip_upload_scans_embedded_files_recursively(client):
     assert "invoice.pdf.exe" in names
     child = next(e for e in report["embedded"] if e["name"] == "invoice.pdf.exe")
     assert child["verdict"] == "infected"
-    html = client.get(f"/file/{sha256}").text
+    html = client.get(f"/ui/file/{sha256}").text
     assert "Embedded" in html
 
 
@@ -65,6 +65,6 @@ def test_relations_tab_links_files_sharing_iocs(client):
     for name in ("a.bin", "b.bin"):
         client.post("/file/upload", files={"file": (name, marker + name.encode())})
     sha_a = hashlib.sha256(marker + b"a.bin").hexdigest()
-    html = client.get(f"/file/{sha_a}").text
+    html = client.get(f"/ui/file/{sha_a}").text
     assert "Relations" in html
     assert "b.bin" in html

@@ -140,9 +140,18 @@ def _scan_and_store(
     return scan, False
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/ui/", status_code=303)
+
+
+@app.get("/ui/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    recent = db.execute(select(Scan).order_by(Scan.scanned_at.desc()).limit(20)).scalars().all()
+    recent = (
+        db.execute(select(Scan).order_by(Scan.scanned_at.desc()).limit(20)).scalars().all()
+        if settings.show_recent_scans
+        else []
+    )
     return templates.TemplateResponse(request, "index.html", {"recent": recent})
 
 
@@ -207,7 +216,7 @@ async def upload(
     )
 
 
-@app.get("/file/{hash_value}", response_class=HTMLResponse)
+@app.get("/ui/file/{hash_value}", response_class=HTMLResponse)
 def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> HTMLResponse:
     scan = _lookup(db, hash_value)
     if scan is None:
@@ -239,7 +248,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     )
 
 
-@app.get("/file/{hash_value}/download")
+@app.get("/ui/file/{hash_value}/download")
 def download(hash_value: str, db: Session = Depends(get_db)) -> FileResponse:
     scan = _lookup(db, hash_value)
     if scan is None:
@@ -250,7 +259,7 @@ def download(hash_value: str, db: Session = Depends(get_db)) -> FileResponse:
     return FileResponse(path, filename=scan.file_name)
 
 
-@app.post("/file/{hash_value}/rescan")
+@app.post("/ui/file/{hash_value}/rescan")
 def rescan(
     background_tasks: BackgroundTasks,
     hash_value: str,
@@ -261,16 +270,16 @@ def rescan(
     if scan is None or stored is None or not stored.exists():
         raise HTTPException(status_code=404, detail="stored sample not found")
     _enqueue_scan(background_tasks, db, stored.read_bytes(), scan.file_name, rescan=True)
-    return RedirectResponse(f"/file/{scan.sha256}", status_code=303)
+    return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
 
 
-@app.get("/search", response_class=HTMLResponse)
+@app.get("/ui/search", response_class=HTMLResponse)
 def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Response:
     q = q.strip()
     if _HASH_RE.match(q):
         scan = _lookup(db, q)
         if scan is not None:
-            return RedirectResponse(f"/file/{scan.sha256}", status_code=303)
+            return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
     results = []
     if q:
         results = (
@@ -304,7 +313,7 @@ async def api_scan(
             "md5": scan.md5,
             "sha1": scan.sha1,
             "status": scan.status,
-            "permalink": f"/file/{scan.sha256}",
+            "permalink": f"/ui/file/{scan.sha256}",
         },
     )
 

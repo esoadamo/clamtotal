@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="hero-title">Analyze suspicious files and URLs</h1>
 <div class="card">
-  <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data">
+  <form id="upload-form" action="/ui/file/upload" method="post" enctype="multipart/form-data">
     <div class="dropzone" id="dropzone">
       <div id="dz-idle">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -33,7 +33,7 @@
     <tbody>
       {% for scan in recent %}
       <tr>
-        <td><a href="/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
+        <td><a href="/ui/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
         <td class="mono">{{ scan.sha256[:20] }}…</td>
         <td>
           {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}
@@ -90,7 +90,7 @@
     xhr.upload.onload = function () { bar.style.width = '100%'; };
     xhr.onload = function () {
       if (xhr.status === 200 || xhr.status === 202) {
-        window.location.href = '/file/' + sha256;  // report page shows the scanning spinner
+        window.location.href = '/ui/file/' + sha256;  // report page shows the scanning spinner
       } else {
         progress.style.display = 'none';
         idle.style.display = 'block';
@@ -115,7 +115,7 @@
     file.arrayBuffer().then(sha256Hex).then(function (sha256) {
       fetch('/api/v2/files/' + sha256).then(function (resp) {
         if (resp.ok) {
-          window.location.href = '/file/' + sha256;  // already analyzed -> straight to report
+          window.location.href = '/ui/file/' + sha256;  // already analyzed -> straight to report
           return;
         }
         pendingFile = { file: file, sha256: sha256 };
@@ -130,13 +130,19 @@
     });
   }
 
-  document.getElementById('modal-cancel').addEventListener('click', function () {
-    overlay.classList.remove('open');
-    input.value = '';
-  });
-  document.getElementById('modal-confirm').addEventListener('click', function () {
-    if (pendingFile) startUpload(pendingFile.file, pendingFile.sha256);
-  });
+  var cancelBtn = document.getElementById('modal-cancel');
+  var confirmBtn = document.getElementById('modal-confirm');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', function () {
+      overlay.classList.remove('open');
+      input.value = '';
+    });
+  }
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function () {
+      if (pendingFile) startUpload(pendingFile.file, pendingFile.sha256);
+    });
+  }
   input.addEventListener('change', function () {
     if (input.files.length) onFileSelected(input.files[0]);
   });

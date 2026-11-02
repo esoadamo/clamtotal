@@ -31,10 +31,10 @@
       </div>
     </div>
     <div style="display:flex; gap:8px">
-      <form action="/file/{{ scan.sha256 }}/rescan" method="post">
+      <form action="/ui/file/{{ scan.sha256 }}/rescan" method="post">
         <button class="btn outline" type="submit">Reanalyze</button>
       </form>
-      <a class="btn" href="/file/{{ scan.sha256 }}/download">Download</a>
+      <a class="btn" href="/ui/file/{{ scan.sha256 }}/download">Download</a>
     </div>
   </div>
 </div>
@@ -88,10 +88,6 @@
         {% endfor %}
       </tbody>
     </table>
-    {% if scan.raw_output %}
-    <h2 class="section-title" style="margin-top:20px">Raw scanner output</h2>
-    <pre class="raw mono">{{ scan.raw_output }}</pre>
-    {% endif %}
   </section>
 
   <section id="tab-details" class="tab-panel">
@@ -202,7 +198,7 @@
         {% for c in scan.embedded %}
         <tr>
           <td>{{ c.name }}</td>
-          <td class="mono"><a href="/file/{{ c.sha256 }}">{{ c.sha256[:20] }}…</a></td>
+          <td class="mono"><a href="/ui/file/{{ c.sha256 }}">{{ c.sha256[:20] }}…</a></td>
           <td>{{ c.size }}</td>
           <td><span class="badge {{ 'malicious' if c.verdict == 'infected' else 'harmless' }}">{{ c.verdict }}</span></td>
         </tr>
@@ -220,7 +216,7 @@
       <tbody>
         {% for other, shared in relations %}
         <tr>
-          <td><a href="/file/{{ other.sha256 }}">{{ other.file_name }}</a></td>
+          <td><a href="/ui/file/{{ other.sha256 }}">{{ other.file_name }}</a></td>
           <td class="mono">{{ shared | join(", ") }}</td>
           <td><span class="badge {{ 'malicious' if other.verdict == 'infected' else 'harmless' }}">{{ other.verdict }}</span></td>
         </tr>

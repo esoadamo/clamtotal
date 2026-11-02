@@ -24,5 +24,8 @@ class Settings(BaseSettings):
     max_embedded_files: int = 10
     max_scan_depth: int = 2
 
+    # show the "recently analyzed files" list on the home page
+    show_recent_scans: bool = True
+
 
 settings = Settings()

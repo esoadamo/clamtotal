@@ -18,7 +18,7 @@ def _upload(client, content: bytes, filename: str = "sample.bin"):
 
 def test_index_lists_recent_scans(client):
     _upload(client, clean_file(b"index"), "first.bin")
-    response = client.get("/")
+    response = client.get("/ui/")
     assert response.status_code == 200
     assert "first.bin" in response.text
 
@@ -29,7 +29,7 @@ def test_upload_returns_hash_and_report_renders(client):
     assert response.status_code == 202
     assert response.json()["sha256"] == sha256
 
-    report = client.get(f"/file/{sha256}")
+    report = client.get(f"/ui/file/{sha256}")
     assert report.status_code == 200
     assert "clean.bin" in report.text
     assert "0/1" in report.text
@@ -39,7 +39,7 @@ def test_upload_returns_hash_and_report_renders(client):
 def test_upload_eicar_is_detected(client):
     sha256, response = _upload(client, EICAR, "eicar.com")
     assert response.status_code == 202
-    report = client.get(f"/file/{sha256}")
+    report = client.get(f"/ui/file/{sha256}")
     assert "1/1" in report.text
     assert "Win.Test.EICAR_HDB-1" in report.text
 
@@ -54,7 +54,7 @@ def test_results_are_cached(client, fake):
 def test_rescan_forces_new_scan(client, fake):
     sha256, _ = _upload(client, b"rescan me", "rescan.bin")
     calls_before = fake.calls
-    response = client.post(f"/file/{sha256}/rescan", follow_redirects=False)
+    response = client.post(f"/ui/file/{sha256}/rescan", follow_redirects=False)
     assert response.status_code == 303
     assert fake.calls == calls_before + 1
 
@@ -62,13 +62,13 @@ def test_rescan_forces_new_scan(client, fake):
 def test_search_by_hash_redirects(client):
     content = clean_file(b"search")
     sha256, _ = _upload(client, content, "searchable.bin")
-    response = client.get("/search", params={"q": sha256}, follow_redirects=False)
+    response = client.get("/ui/search", params={"q": sha256}, follow_redirects=False)
     assert response.status_code == 303
-    assert response.headers["location"] == f"/file/{sha256}"
+    assert response.headers["location"] == f"/ui/file/{sha256}"
 
 
 def test_search_unknown_hash_shows_empty_results(client):
-    response = client.get("/search", params={"q": "0" * 64})
+    response = client.get("/ui/search", params={"q": "0" * 64})
     assert response.status_code == 200
     assert "No results found" in response.text
 
@@ -77,13 +77,13 @@ def test_report_lookup_by_md5(client):
     content = clean_file(b"md5")
     _upload(client, content, "md5lookup.bin")
     md5 = hashlib.md5(content).hexdigest()
-    response = client.get(f"/file/{md5}")
+    response = client.get(f"/ui/file/{md5}")
     assert response.status_code == 200
     assert "md5lookup.bin" in response.text
 
 
 def test_unknown_report_returns_404(client):
-    response = client.get(f"/file/{'a' * 64}")
+    response = client.get(f"/ui/file/{'a' * 64}")
     assert response.status_code == 404
 
 
@@ -110,6 +110,6 @@ def test_download_stored_sample(client):
     content = clean_file(b"download")
     _upload(client, content, "download.bin")
     sha256 = hashlib.sha256(content).hexdigest()
-    response = client.get(f"/file/{sha256}/download")
+    response = client.get(f"/ui/file/{sha256}/download")
     assert response.status_code == 200
     assert response.content == content
