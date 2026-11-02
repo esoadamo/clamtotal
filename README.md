@@ -25,6 +25,7 @@ Features (all fully offline, no login, no community features):
   (re-uploading the same file returns the cached report instantly)
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
 - Search by MD5/SHA-1/SHA-256 or file name, sample download, forced rescan
+- Indicators are **defanged** in the UI (`hxxp://`, `[.]`) so they are never clickable/loaded; IPs preceded by `version`/`v` are not misdetected; domains require a real IANA TLD and a second-level label of >= 5 chars
 - UI is served under `/ui/` (home, file reports, search); `/` redirects there. API: `POST /file/upload`, `/api/v2/...`
 - Minimal VT-compatible JSON API: `POST /api/v2/files` (returns `202` + `sha256` and
   scans asynchronously, or `200` with `cached: true` if the hash was already
@@ -52,6 +53,7 @@ Open http://127.0.0.1:8000/ui/ — try uploading the
 
 ```sh
 podman build -t clamtotal .
+# 2 workers per CPU core, trusts proxy headers (works behind a Cloudflare Tunnel)
 podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal
 # or: podman compose up
 ```
@@ -84,6 +86,8 @@ original ruleset is bundled in `app/rules/public.yar`.
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
+| `UPLOADS_TTL` | `-1` | how long uploaded samples are stored locally, in minutes: `-1` = forever, `0` = delete right after upload+scan, `N` = keep N minutes (pruned every minute) |
+| `SCAN_POLL_INTERVAL_MS` | `3000` | how often the pending report page polls for scan progress |
 
 ## Development
 
