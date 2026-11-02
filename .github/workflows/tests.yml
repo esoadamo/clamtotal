@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint and format check
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+
+      - name: Type check
+        run: uv run ty check
+
+      - name: Run migrations check
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: sqlite:///${{ runner.temp }}/migrations-check.db
+
+      - name: Run unit tests (100% coverage of app/ enforced)
+        run: uv run pytest

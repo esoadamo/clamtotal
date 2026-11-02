@@ -28,6 +28,12 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `alembic/` — migrations (`alembic revision --autogenerate -m "..."`)
 - `Containerfile`, `compose.yaml`, `container-entrypoint.sh` — Podman deployment
 
+## CI
+
+- GitHub Actions (`.github/workflows/tests.yml`) runs on every push/PR: ruff
+  format+check, `ty check`, alembic migrations, and `pytest` (which enforces
+  100% coverage of `app/` via `--cov-fail-under=100`).
+
 ## Commands
 
 ```sh
