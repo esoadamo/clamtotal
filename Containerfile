@@ -10,6 +10,9 @@
 ARG AIRGAPPED=false
 FROM python:3.12-slim-bookworm
 
+# uv is not in the base image — install the official binary
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1 \
@@ -28,7 +31,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --group signatures
 COPY . .
-RUN uv sync --frozen --no-dev --group signatures
+RUN uv sync --frozen --no-dev --no-install-project --group signatures
 
 # Unofficial signature DBs (SaneSecurity etc., includes YARA rules) via fangfrisch.
 COPY container/fangfrisch.conf /etc/fangfrisch.conf
@@ -40,10 +43,11 @@ RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficia
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).
 RUN sed -i \
-      -e 's/^#\(TCPSocket 3310\)/\1/' \
-      -e 's/^#\(TCPAddr .*\)/TCPAddr 0.0.0.0/' \
+      -e 's/^#\{0,1\}\(TCPSocket 3310\)/\1/' \
+      -e 's/^#\{0,1\}\(TCPAddr .*\)/TCPAddr 0.0.0.0/' \
       /etc/clamav/clamd.conf \
-    && grep -q '^TCPSocket 3310' /etc/clamav/clamd.conf
+    && { grep -q '^TCPSocket 3310' /etc/clamav/clamd.conf || echo 'TCPSocket 3310' >> /etc/clamav/clamd.conf; } \
+    && { grep -q '^TCPAddr 0.0.0.0' /etc/clamav/clamd.conf || echo 'TCPAddr 0.0.0.0' >> /etc/clamav/clamd.conf; }
 
 # Bundled public YARA rules; mount your own public rules over /rules.
 RUN mkdir -p /rules && cp /app/app/rules/*.yar /rules/
