@@ -3,8 +3,17 @@ set -e
 
 mkdir -p /data/uploads /rules
 
-# Optional background signature autoupdater (freshclam + unofficial DBs via fangfrisch).
-# Disable with CLAM_AUTOUPDATE=false for fully airgapped operation.
+# First-launch signature bootstrap (default mode): download official + unofficial
+# signatures once, on the first container start — not at image build time.
+# Skipped entirely when CLAM_AUTOUPDATE=false (e.g. AIRGAPPED=true images that
+# already have signatures baked in).
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && [ ! -f /data/.signatures-initialized ]; then
+  echo "[bootstrap] downloading ClamAV signatures on first launch..."
+  update-signatures.sh || echo "[bootstrap] signature download failed; will retry on next start"
+  touch /data/.signatures-initialized
+fi
+
+# Periodic background autoupdater (freshclam + unofficial DBs).
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   (
     interval="${CLAM_UPDATE_INTERVAL:-21600}"  # 6h

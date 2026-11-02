@@ -11,9 +11,14 @@ FANGFRISCH_CONF="${FANGFRISCH_CONF:-/etc/fangfrisch.conf}"
 echo "[signatures] running freshclam (official DBs)..."
 freshclam --quiet || echo "[signatures] freshclam failed (offline?) — keeping existing official DBs"
 
-if command -v fangfrisch >/dev/null 2>&1 && [ -f "$FANGFRISCH_CONF" ]; then
+# fangfrisch is installed in the app venv inside the container — resolve it there if needed
+FANGFRISCH_BIN="$(command -v fangfrisch || true)"
+if [ -z "$FANGFRISCH_BIN" ] && [ -x /app/.venv/bin/fangfrisch ]; then
+  FANGFRISCH_BIN=/app/.venv/bin/fangfrisch
+fi
+if [ -n "$FANGFRISCH_BIN" ] && [ -f "$FANGFRISCH_CONF" ]; then
   echo "[signatures] refreshing unofficial DBs via fangfrisch..."
-  fangfrisch --conf "$FANGFRISCH_CONF" refresh || echo "[signatures] fangfrisch refresh failed (offline?) — keeping existing unofficial DBs"
+  "$FANGFRISCH_BIN" --conf "$FANGFRISCH_CONF" refresh || echo "[signatures] fangfrisch refresh failed (offline?) — keeping existing unofficial DBs"
 fi
 
 # extremeshok/clamav-unofficial-sigs (public community signature set)

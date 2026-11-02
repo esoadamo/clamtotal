@@ -3,10 +3,10 @@
 # Build:  podman build -t clamtotal .
 # Run:    podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data -v ./my-rules:/rules:ro clamtotal
 #
-# Fully airgapped builds: build with --build-arg AIRGAPPED=true (skips all signature
-# downloads at build time) and bake your own signatures into /var/lib/clamav, e.g.
-#   podman build --build-arg AIRGAPPED=true -t clamtotal .
-# and at runtime set CLAM_AUTOUPDATE=false.
+# Fully airgapped deployments: build with --build-arg AIRGAPPED=true so all signatures
+# (official + unofficial) are BAKED INTO the image at build time; at runtime the
+# autoupdater is disabled (CLAM_AUTOUPDATE=false). Default builds download signatures
+# on first container launch instead.
 ARG AIRGAPPED=false
 FROM python:3.12-slim-bookworm
 
@@ -36,10 +36,14 @@ RUN uv sync --frozen --no-dev --no-install-project --group signatures
 # Unofficial signature DBs (SaneSecurity etc., includes YARA rules) via fangfrisch.
 COPY container/fangfrisch.conf /etc/fangfrisch.conf
 COPY scripts/update-signatures.sh scripts/update-unofficial-sigs.sh /usr/local/bin/
+# fangfrisch is installed in the uv venv, not on PATH — call it via the venv binary.
+# Signature semantics: by default NOTHING is downloaded at build time (signatures are
+# fetched on first container launch, see container-entrypoint.sh). AIRGAPPED=true bakes
+# signatures into the image at build time instead.
 RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficial-sigs.sh \
-    && fangfrisch --conf /etc/fangfrisch.conf initdb \
-    && if [ "$AIRGAPPED" != "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
-         else echo "AIRGAPPED build: skipping signature downloads — bake signatures into /var/lib/clamav"; fi
+    && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
+    && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
+         else echo "default build: signatures are downloaded on first container launch"; fi
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).
 RUN sed -i \

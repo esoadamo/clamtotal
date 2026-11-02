@@ -66,12 +66,12 @@ podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal
 # or: podman compose up
 ```
 
-ClamAV signatures are refreshed at image build time and every 6 hours at
-runtime (`update-signatures.sh`: `freshclam` + fangfrisch/SaneSecurity, which
+By default, ClamAV signatures are **downloaded on first container launch** (not at build
+time) and refreshed every 6 hours at runtime (`update-signatures.sh`: `freshclam` + fangfrisch/SaneSecurity, which
 ships YARA rules clamd loads natively). For a fully airgapped deployment:
 
 ```sh
-podman build --build-arg AIRGAPPED=true -t clamtotal .
+podman build --build-arg AIRGAPPED=true -t clamtotal .  # signatures baked in at BUILD time
 podman run -e CLAM_AUTOUPDATE=false -v ./my-signatures:/var/lib/clamav:ro \
   -v ./my-public-rules:/rules:ro -p 127.0.0.1:8000:8000 clamtotal
 ```
