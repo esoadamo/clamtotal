@@ -20,8 +20,10 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `app/config.py` — env-based settings (pydantic-settings)
 - `app/db.py` — engine, `SessionLocal`, `get_db`, `Base`
 - `app/models.py` — `Scan` table (hashes, verdict, signature, URLs, ...)
-- `app/scanner.py` — `ClamdScanner` / `ClamscanScanner` behind a `Scanner` protocol
-- `app/analysis.py` — hashing, URL extraction, file-type sniffing
+- `app/scanner.py` — `ClamdScanner` / `ClamscanScanner` (Scanner protocol) + `YaraScanner` (local public rules)
+- `app/analysis.py` — hashing (MD5/SHA-1/SHA-256/SHA-512/CRC32), IOC extraction (URLs, domains, IPs, emails, registry keys, BTC), PE/ELF/PDF/Office parsing, suspicious strings, archive extraction
+- `app/rules/` — bundled original public YARA rules (mounted at `/rules` in the container)
+- `scripts/update-signatures.sh`, `container/fangfrisch.conf` — official (freshclam) + unofficial (SaneSecurity, incl. YARA) signature updates; `CLAM_AUTOUPDATE=false` for airgapped
 - `app/templates/` — VirusTotal-style UI (`base`, `index`, `report`, `search`)
 - `alembic/` — migrations (`alembic revision --autogenerate -m "..."`)
 - `Containerfile`, `compose.yaml`, `container-entrypoint.sh` — Podman deployment
@@ -44,5 +46,7 @@ podman build -t clamtotal . && podman compose up   # container mode (clamd)
 - Keep code clean and compact: do not create many small functions — inline logic
   that is used only once.
 - Every model change goes through an Alembic migration; keep SQLite compatible.
-- Runtime must stay airgapped: never add runtime calls to external services.
+- Runtime must stay airgapped by default: never add runtime calls to external
+  services. Signature updates (freshclam/fangfrisch) are opt-out via
+  `CLAM_AUTOUPDATE=false`, and no community/login features.
 - Run `ruff format`, `ruff check`, and `ty check` before committing.
