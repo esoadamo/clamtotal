@@ -25,7 +25,13 @@ Features (all fully offline, no login, no community features):
   (re-uploading the same file returns the cached report instantly)
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
 - Search by MD5/SHA-1/SHA-256 or file name, sample download, forced rescan
-- Minimal VT-compatible JSON API: `POST /api/v2/files`, `GET /api/v2/files/{hash}`
+- Minimal VT-compatible JSON API: `POST /api/v2/files` (returns `202` + `sha256` and
+  scans asynchronously, or `200` with `cached: true` if the hash was already
+  analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`)
+- VT-style UX flow: the browser hashes the file (SHA-256) and checks
+  `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
+  report; new files ask for confirmation, then upload with a progress bar and
+  land on `/file/{hash}`, which shows a rotating spinner until the scan finishes
 
 ## Local development
 
