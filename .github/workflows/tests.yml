@@ -37,3 +37,11 @@ jobs:
 
       - name: Run unit tests (100% coverage of app/ enforced)
         run: uv run pytest
+
+      - name: Set up Node.js for frontend tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run frontend JS tests
+        run: node --test tests/js/app.test.mjs

@@ -26,7 +26,7 @@ def test_pending_report_page_shows_spinner_and_polls(client):
     page = client.get(f"/ui/file/{sha}")
     assert page.status_code == 200
     assert "Scanning pending.bin" in page.text
-    assert "setInterval" in page.text  # polls /api/v2/files/{sha} until done
+    assert 'id="pending-data"' in page.text  # app.js polls /api/v2/files/{sha} until done
     api = client.get(f"/api/v2/files/{sha}").json()
     assert api["status"] == "pending"
 

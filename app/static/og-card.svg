@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f7f5f0"/>
+  <rect width="1200" height="14" fill="#0f766e"/>
+  <g transform="translate(120,165)">
+    <path d="M160 20 40 82v96c0 90 61 156 120 180 59-24 120-90 120-180V82L160 20Z" fill="#0f766e"/>
+    <path d="m105 198 46 46 86-91" stroke="#fbbf24" stroke-width="36" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="500" y="330" font-family="Avenir Next, Segoe UI, Roboto, Arial, sans-serif" font-size="96" font-weight="700" fill="#292524">Clam<tspan fill="#0f766e">Total</tspan></text>
+  <text x="500" y="420" font-family="Avenir Next, Segoe UI, Roboto, Arial, sans-serif" font-size="36" fill="#78716c">Analyze suspicious files with ClamAV</text>
+</svg>

@@ -146,7 +146,7 @@ def test_pending_page_uses_configured_poll_interval(client, monkeypatch):
             )
         )
         db.commit()
-    assert "}, 7000);" in client.get(f"/ui/file/{sha}").text
+    assert 'data-interval="7000"' in client.get(f"/ui/file/{sha}").text
 
 
 def test_prune_uploads_ttl(tmp_path, monkeypatch):

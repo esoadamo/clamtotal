@@ -2,21 +2,11 @@
 {% block title %}{{ scan.file_name }} — ClamTotal{% endblock %}
 {% block content %}
 {% if pending %}
-<div class="card" style="text-align:center; padding:48px 24px">
+<div class="card" style="text-align:center; padding:48px 24px" id="pending-data" data-sha="{{ scan.sha256 }}" data-interval="{{ poll_interval | default(3000) }}">
   <div class="spinner" style="width:56px; height:56px; border-width:5px"></div>
   <div style="font-size:18px; margin-top:18px">Scanning {{ scan.file_name }}…</div>
   <div class="muted" style="margin-top:6px">Running ClamAV and local analysis engines · SHA-256 <span class="mono">{{ scan.sha256 }}</span></div>
 </div>
-<script>
-(function () {
-  var sha = "{{ scan.sha256 }}";
-  var timer = setInterval(function () {
-    fetch('/api/v2/files/' + sha).then(function (r) { return r.json(); }).then(function (data) {
-      if (data.status === 'done') { clearInterval(timer); window.location.reload(); }
-    }).catch(function () {});
-  }, {{ poll_interval | default(3000) }});
-})();
-</script>
 {% else %}
 {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}
 {% set total = (scan.engines or []) | length %}
@@ -228,12 +218,4 @@
 </div>
 {% endif %}
 
-<script>
-document.querySelectorAll('.tab').forEach(function (btn) {
-  btn.addEventListener('click', function () {
-    document.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === btn); });
-    document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.toggle('active', p.id === 'tab-' + btn.dataset.tab); });
-  });
-});
-</script>
 {% endblock %}

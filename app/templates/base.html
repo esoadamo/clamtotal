@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>{% block title %}ClamTotal{% endblock %}</title>
+{% set og_title = self.title() %}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ClamTotal">
+<meta property="og:title" content="{{ og_title }}">
+<meta property="og:description" content="Analyze suspicious files with ClamAV — VirusTotal-style reports, fully offline.">
+<meta property="og:image" content="/static/og-card.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ og_title }}">
+<meta name="twitter:description" content="Analyze suspicious files with ClamAV — VirusTotal-style reports, fully offline.">
+<meta name="twitter:image" content="/static/og-card.svg">
+<meta name="theme-color" content="#0f766e">
 <style>
   :root {
     --brand: #0f766e;        /* deep teal */
@@ -202,5 +213,6 @@
     </div>
   </div>
 </div>
+<script src="/static/app.js"></script>
 </body>
 </html>
