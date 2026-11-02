@@ -37,8 +37,15 @@ def test_extract_iocs():
 
 
 def test_extract_iocs_punycode_flagged():
-    iocs = extract_iocs(b"go to xn--nxasmq6b.example")
+    iocs = extract_iocs(b"go to xn--80ak6aa92e.com")  # cyrillic lookalike of apple.com
     assert any("xn--" in d for d in iocs["punycode_domains"])
+
+
+def test_extract_iocs_only_real_tlds():
+    iocs = extract_iocs(b"visit foo.notarealtld and bar.example and baz.com")
+    assert "baz.com" in iocs["domains"]
+    assert "foo.notarealtld" not in iocs["domains"]
+    assert "bar.example" not in iocs["domains"]  # .example is reserved, not in the IANA list
 
 
 def test_suspicious_strings_and_urls():
