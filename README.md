@@ -80,7 +80,7 @@ original ruleset is bundled in `app/rules/public.yar`.
 ## Development
 
 ```sh
-uv run pytest                 # tests
+uv run pytest                 # tests, enforced at 100% coverage of app/ (--cov-fail-under=100)
 uv run ruff format .          # format
 uv run ruff check .           # lint
 uv run ty check               # type check

@@ -49,4 +49,6 @@ podman build -t clamtotal . && podman compose up   # container mode (clamd)
 - Runtime must stay airgapped by default: never add runtime calls to external
   services. Signature updates (freshclam/fangfrisch) are opt-out via
   `CLAM_AUTOUPDATE=false`, and no community/login features.
+- **100% test coverage is mandatory**: `app/` must be at 100% line coverage
+  (`pytest` runs with `--cov=app --cov-fail-under=100` via `addopts`; keep it green).
 - Run `ruff format`, `ruff check`, and `ty check` before committing.
