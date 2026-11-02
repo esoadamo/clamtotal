@@ -3,17 +3,25 @@
 {% block content %}
 <h1 class="hero-title">Analyze suspicious files and URLs</h1>
 <div class="card">
-  <form action="/file/upload" method="post" enctype="multipart/form-data">
+  <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data">
     <div class="dropzone" id="dropzone">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round"/>
-      </svg>
-      <div class="dz-title">Drag and drop a file here to scan it</div>
-      <div>Maximum file size: 512 MB</div>
-      <div class="dz-or">or</div>
-      <label class="btn" for="file-input">Browse files</label>
-      <input id="file-input" type="file" name="file" required style="display:none" onchange="this.form.submit()">
+      <div id="dz-idle">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div class="dz-title">Drag and drop a file here to scan it</div>
+        <div>Maximum file size: 512 MB</div>
+        <div class="dz-or">or</div>
+        <label class="btn" for="file-input">Browse files</label>
+        <input id="file-input" type="file" name="file" required style="display:none">
+      </div>
+      <div id="dz-progress" style="display:none">
+        <div class="spinner" id="dz-spinner" style="display:none"></div>
+        <div class="dz-status" id="dz-status">Uploading…</div>
+        <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+      </div>
+      <div id="dz-error" class="dz-status" style="display:none; color: var(--vt-red)"></div>
     </div>
   </form>
 </div>
@@ -42,7 +50,61 @@
 <script>
 (function () {
   var dz = document.getElementById('dropzone');
-  if (!dz) return;
+  var form = document.getElementById('upload-form');
+  var input = document.getElementById('file-input');
+  var idle = document.getElementById('dz-idle');
+  var progress = document.getElementById('dz-progress');
+  var spinner = document.getElementById('dz-spinner');
+  var status = document.getElementById('dz-status');
+  var bar = document.getElementById('progress-bar');
+  var errorBox = document.getElementById('dz-error');
+
+  function uploadFile(file) {
+    idle.style.display = 'none';
+    errorBox.style.display = 'none';
+    progress.style.display = 'block';
+    spinner.style.display = 'none';
+    status.textContent = 'Uploading ' + file.name + '…';
+    bar.style.width = '0%';
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', form.action);
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) {
+        var pct = Math.round((e.loaded / e.total) * 100);
+        bar.style.width = pct + '%';
+        status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
+      }
+    };
+    xhr.upload.onload = function () {
+      bar.style.width = '100%';
+      spinner.style.display = 'block';  // VT-style rotating circle while scanning
+      status.textContent = 'Scanning ' + file.name + '…';
+    };
+    xhr.onload = function () {
+      if (xhr.status === 303) {
+        window.location.href = xhr.getResponseHeader('Location');
+      } else {
+        progress.style.display = 'none';
+        idle.style.display = 'block';
+        errorBox.style.display = 'block';
+        errorBox.textContent = 'Scan failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200);
+      }
+    };
+    xhr.onerror = function () {
+      progress.style.display = 'none';
+      idle.style.display = 'block';
+      errorBox.style.display = 'block';
+      errorBox.textContent = 'Network error while uploading.';
+    };
+    var fd = new FormData();
+    fd.append('file', file, file.name);
+    xhr.send(fd);
+  }
+
+  input.addEventListener('change', function () {
+    if (input.files.length) uploadFile(input.files[0]);
+  });
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
   ['dragover', 'dragenter'].forEach(function (ev) {
     dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#0b4dda'; });
   });
@@ -50,11 +112,7 @@
     dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = ''; });
   });
   dz.addEventListener('drop', function (e) {
-    var input = document.getElementById('file-input');
-    if (e.dataTransfer.files.length) {
-      input.files = e.dataTransfer.files;
-      input.form.submit();
-    }
+    if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
   });
 })();
 </script>

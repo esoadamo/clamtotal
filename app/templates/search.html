@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Search: {{ q }} — ClamTotal{% endblock %}
 {% block content %}
+<div class="card" style="padding:16px 24px">
+  <form class="appbar-search" style="max-width:none" action="/search" method="get">
+    <input type="text" name="q" placeholder="Search by hash, file name, URL, domain or IP" value="{{ q }}">
+    <button type="submit">Search</button>
+  </form>
+</div>
 <div class="card">
   <h2>Search results for “{{ q }}”</h2>
   {% if results %}
