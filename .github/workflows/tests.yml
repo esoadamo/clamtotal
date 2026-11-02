@@ -38,10 +38,32 @@ jobs:
       - name: Run unit tests (100% coverage of app/ enforced)
         run: uv run pytest
 
-      - name: Set up Node.js for frontend tests
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Run frontend JS tests
         run: node --test tests/js/app.test.mjs
+
+  build-image:
+    name: Build and publish container image
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/clamtotal:latest
+            ghcr.io/${{ github.repository_owner }}/clamtotal:${{ github.sha }}

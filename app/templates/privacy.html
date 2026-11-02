@@ -3,30 +3,35 @@
 {% block content %}
 <div class="card">
   <h2 style="font-size:20px; text-transform:none; letter-spacing:0; color:var(--text)">Privacy policy</h2>
-  <p>ClamTotal is a self-hosted file-analysis service. It is designed so that <strong>nothing leaves your machine or your server</strong>.</p>
+  <p>This policy describes what happens to <strong>your data when you use this website</strong> as a visitor or uploader.</p>
 
-  <h3 class="section-title" style="margin-top:20px">What we collect</h3>
+  <h3 class="section-title" style="margin-top:20px">What we collect from you</h3>
   <ul>
-    <li><strong>Files you upload</strong> — stored locally (by SHA-256) only as long as <code>UPLOADS_TTL</code> says: forever by default (<code>-1</code>), deleted right after scanning (<code>0</code>), or kept for N minutes. A background job prunes them every minute.</li>
-    <li><strong>Scan metadata</strong> — file name(s), hashes, verdicts, extracted indicators (URLs, domains, IPs, emails, registry keys) and static-analysis results, stored in the local SQLite database on your server.</li>
+    <li><strong>Files you upload</strong> — kept on the server only for the configured retention period (<code>UPLOADS_TTL</code>): forever by default, deleted immediately after scanning if set to <code>0</code>, or kept for N minutes.</li>
+    <li><strong>Scan results for those files</strong> — file name(s), hashes, detection verdicts, and extracted indicators (URLs, domains, IP addresses, email addresses, registry keys), stored in the site's local database.</li>
+    <li><strong>Search queries</strong> you type into the search box are processed in memory only to answer the request and are not stored.</li>
   </ul>
 
-  <h3 class="section-title" style="margin-top:20px">What we do not do</h3>
+  <h3 class="section-title" style="margin-top:20px">What we do not collect</h3>
   <ul>
-    <li>No accounts, no login, no cookies, no analytics, no tracking, no telemetry.</li>
-    <li>No data is sent to any third party. Scanning (ClamAV + local YARA rules) and all analysis run entirely on your own infrastructure — the app works fully offline.</li>
-    <li>Extracted indicators are <strong>defanged</strong> in the UI (<code>hxxp://</code>, <code>[.]</code>) so they are never fetched or clicked accidentally.</li>
-    <li>No samples or metadata are shared with anyone, including antivirus vendors.</li>
+    <li>No accounts, no login, no passwords, no profiles.</li>
+    <li>No cookies, no analytics, no tracking pixels, no fingerprinting, no telemetry.</li>
+    <li>No IP logging of your visits beyond what the server needs to answer the request; we do not build profiles of visitors.</li>
   </ul>
 
-  <h3 class="section-title" style="margin-top:20px">Your controls</h3>
+  <h3 class="section-title" style="margin-top:20px">Where your data goes</h3>
   <ul>
-    <li>Set <code>UPLOADS_TTL=0</code> to never keep uploaded files on disk.</li>
-    <li>Set <code>SHOW_RECENT_SCANS=false</code> to hide the recent-scans list.</li>
-    <li>Delete the database and upload directory at any time to erase all records.</li>
+    <li>Nowhere external. Scanning (ClamAV and local YARA rules) and all analysis run entirely on this server — no sample or metadata is sent to any third party or antivirus vendor.</li>
+    <li>Indicators shown in reports are <strong>defanged</strong> (<code>hxxp://</code>, <code>[.]</code>) so your browser never fetches them accidentally.</li>
+  </ul>
+
+  <h3 class="section-title" style="margin-top:20px">Your rights and controls</h3>
+  <ul>
+    <li>Uploaded files are deleted automatically after the configured retention period; simply do not upload files you want to keep private.</li>
+    <li>You may request deletion of any file's scan record and stored sample by its SHA-256.</li>
   </ul>
 
   <h3 class="section-title" style="margin-top:20px">Security note</h3>
-  <p>Uploaded files may be malicious. ClamTotal is meant to run in an isolated environment (e.g. a container with no access to sensitive data), exactly like the real VirusTotal is used.</p>
+  <p>Files uploaded to this service may be malicious. Do not upload files containing personal or confidential data unless you trust this instance.</p>
 </div>
 {% endblock %}

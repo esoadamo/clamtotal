@@ -51,6 +51,12 @@ uv run uvicorn app.main:app --reload
 Open http://127.0.0.1:8000/ui/ — try uploading the
 [EICAR test file](https://en.wikipedia.org/wiki/EICAR_test_file) to see a detection.
 
+## Container image
+
+On every push to `main` where all tests pass, CI builds and publishes the image to GHCR:
+`ghcr.io/<owner>/clamtotal:latest` (plus a per-commit SHA tag). Pull with:
+`podman pull ghcr.io/<owner>/clamtotal:latest`.
+
 ## Podman (container mode with clamd)
 
 ```sh

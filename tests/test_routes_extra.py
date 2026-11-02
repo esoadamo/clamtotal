@@ -228,3 +228,17 @@ def test_privacy_policy_page(client):
     assert "UPLOADS_TTL" in page.text
     # linked from every page footer
     assert 'href="/ui/privacy"' in client.get("/ui/").text
+
+
+def test_privacy_policy_is_user_focused(client):
+    page = client.get("/ui/privacy").text
+    assert "as a visitor or uploader" in page
+    # no operator/admin framing left
+    for banned in [
+        "self-hosted",
+        "site operator",
+        "ask the operator",
+        "your server",
+        "your machine",
+    ]:
+        assert banned not in page.lower(), banned
