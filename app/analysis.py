@@ -10,6 +10,15 @@ import struct
 import tarfile
 import zipfile
 from collections import Counter
+from pathlib import Path
+
+# Official IANA TLD list, bundled for fully offline validation
+# (source: data.iana.org/TLD/tlds-alpha-by-domain.txt)
+_TLDS = frozenset(
+    line.strip().lower()
+    for line in (Path(__file__).parent / "data" / "tlds.txt").read_text().splitlines()
+    if line.strip()
+)
 
 _URL_RE = re.compile(rb"(?:https?|ftp)://[^\s\"'<>()\[\]{}|\\^`]+", re.IGNORECASE)
 _IPV4_RE = re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -111,7 +120,9 @@ def extract_iocs(data: bytes, limit: int = 500) -> dict[str, list[str]]:
             continue
         _add(ips, f"{ip} (private)" if ip.is_private else str(ip))
     for m in _DOMAIN_RE.finditer(data):
-        _add(domains, m.group(0).decode("latin-1").lower().rstrip("."))
+        domain = m.group(0).decode("latin-1").lower().rstrip(".")
+        if domain.rsplit(".", 1)[-1] in _TLDS:  # only real, existing TLDs
+            _add(domains, domain)
     for m in _EMAIL_RE.finditer(data):
         _add(emails, m.group(0).decode("latin-1"))
     for m in _REGISTRY_RE.finditer(data):
