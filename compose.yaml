@@ -1,0 +1,13 @@
+services:
+  clamtotal:
+    build: .
+    image: localhost/clamtotal:latest
+    container_name: clamtotal
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - clamtotal-data:/data
+    restart: unless-stopped
+
+volumes:
+  clamtotal-data:
