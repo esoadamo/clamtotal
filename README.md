@@ -102,6 +102,7 @@ original ruleset is bundled in `app/rules/public.yar`.
 ## Development
 
 ```sh
+uv run bandit -r app/ -ll -q   # SAST scan of the source code
 uv run pytest                 # backend tests, enforced at 100% coverage of app/ (--cov-fail-under=100)
 node --test tests/js/app.test.mjs   # frontend JS tests
 uv run ruff format .          # format

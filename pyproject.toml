@@ -25,6 +25,7 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "httpx>=0.28",
     "pytest>=8",
     "pytest-cov>=6",

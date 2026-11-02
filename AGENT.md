@@ -33,8 +33,8 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 ## CI
 
 - GitHub Actions (`.github/workflows/tests.yml`) runs on every push/PR: ruff
-  format+check, `ty check`, alembic migrations, and `pytest` (which enforces
-  100% coverage of `app/` via `--cov-fail-under=100`).
+  format+check, `ty check`, alembic migrations, `pytest` (100% coverage gate),
+  bandit SAST, pip-audit SCA; the container image builds only if all pass.
 
 ## Commands
 
@@ -59,4 +59,4 @@ podman build -t clamtotal . && podman compose up   # container mode (clamd)
   `CLAM_AUTOUPDATE=false`, and no community/login features.
 - **100% test coverage is mandatory**: `app/` must be at 100% line coverage
   (`pytest` runs with `--cov=app --cov-fail-under=100` via `addopts`; keep it green).
-- Run `ruff format`, `ruff check`, and `ty check` before committing.
+- Run `ruff format`, `ruff check`, `ty check`, and `uv run bandit -r app/ -ll -q` (SAST) before committing.

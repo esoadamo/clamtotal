@@ -83,8 +83,9 @@ _MAGIC_SIGNATURES: list[tuple[bytes, str]] = [
 
 def compute_hashes(data: bytes) -> dict[str, str]:
     return {
-        "md5": hashlib.md5(data).hexdigest(),
-        "sha1": hashlib.sha1(data).hexdigest(),
+        # MD5/SHA-1 are file identifiers here (VirusTotal-compatible), not security primitives
+        "md5": hashlib.md5(data, usedforsecurity=False).hexdigest(),
+        "sha1": hashlib.sha1(data, usedforsecurity=False).hexdigest(),
         "sha256": hashlib.sha256(data).hexdigest(),
         "sha512": hashlib.sha512(data).hexdigest(),
         "crc32": f"{binascii.crc32(data) & 0xFFFFFFFF:08x}",
@@ -276,7 +277,11 @@ def parse_pe(data: bytes) -> dict | None:
                     idx += 1
                     if idx > 256:
                         break
-        imphash = hashlib.md5(",".join(sorted(imports)).encode()).hexdigest() if imports else None
+        imphash = (
+            hashlib.md5(",".join(sorted(imports)).encode(), usedforsecurity=False).hexdigest()
+            if imports
+            else None
+        )
 
         exports: list[str] = []
         if len(dirs) > 0 and dirs[0][0]:

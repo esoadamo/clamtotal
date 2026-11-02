@@ -27,6 +27,7 @@ jobs:
           uv run ruff format --check .
           uv run ruff check .
           uv run ty check
+          uv run bandit -r app/ -ll -q
           uv run pytest
           node --test tests/js/app.test.mjs
           uv export --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/reqs.txt
