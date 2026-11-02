@@ -7,6 +7,11 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - clamtotal-data:/data
+      # mount your own public YARA rules here (read-only); optional
+      # - ./rules:/rules:ro
+    environment:
+      # set to "false" for fully airgapped operation (bake signatures into the image)
+      CLAM_AUTOUPDATE: "true"
     restart: unless-stopped
 
 volumes:

@@ -1,7 +1,19 @@
 #!/bin/bash
 set -e
 
-mkdir -p /data/uploads
+mkdir -p /data/uploads /rules
+
+# Optional background signature autoupdater (freshclam + unofficial DBs via fangfrisch).
+# Disable with CLAM_AUTOUPDATE=false for fully airgapped operation.
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
+  (
+    interval="${CLAM_UPDATE_INTERVAL:-21600}"  # 6h
+    while true; do
+      sleep "$interval"
+      update-signatures.sh || echo "[autoupdate] update failed; will retry next cycle"
+    done
+  ) &
+fi
 
 clamd &
 
