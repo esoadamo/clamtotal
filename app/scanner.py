@@ -83,10 +83,13 @@ class ClamscanScanner:
 
     def __init__(self) -> None:
         self._path = settings.clamscan_path
-        version = subprocess.run(
-            [self._path, "--version"], capture_output=True, text=True, check=False
-        )
-        suffix = version.stdout.strip() if version.returncode == 0 else ""
+        try:
+            version = subprocess.run(
+                [self._path, "--version"], capture_output=True, text=True, check=False
+            )
+            suffix = version.stdout.strip() if version.returncode == 0 else ""
+        except OSError:
+            suffix = ""
         self.engine = f"ClamAV (clamscan) {suffix}".strip()
 
     def available(self) -> bool:
@@ -97,15 +100,16 @@ class ClamscanScanner:
             [self._path, "--stdout", "-"],
             input=data,
             capture_output=True,
-            text=True,
             timeout=settings.clamscan_timeout,
         )
+        out = proc.stdout.decode(errors="replace")
+        err = proc.stderr.decode(errors="replace")
         if proc.returncode == 2:
-            raise ScannerUnavailableError(f"clamscan failed: {proc.stderr.strip()}")
-        match = re.search(r"^stdin:\s+(.+?)\s+FOUND$", proc.stdout, re.MULTILINE)
+            raise ScannerUnavailableError(f"clamscan failed: {err.strip()}")
+        match = re.search(r"^stdin:\s+(.+?)\s+FOUND$", out, re.MULTILINE)
         if proc.returncode == 1 and match:
-            return ScanResult("infected", match.group(1), self.engine, proc.stdout.strip())
-        return ScanResult("clean", None, self.engine, proc.stdout.strip())
+            return ScanResult("infected", match.group(1), self.engine, out.strip())
+        return ScanResult("clean", None, self.engine, out.strip())
 
 
 class YaraScanner:
