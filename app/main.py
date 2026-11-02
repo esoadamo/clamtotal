@@ -9,7 +9,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Requ
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import or_, select
+from sqlalchemy import String, or_, select
 from sqlalchemy.orm import Session
 
 from app.analysis import (
@@ -342,6 +342,11 @@ def rescan(
     return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
 
 
+@app.get("/ui/privacy", response_class=HTMLResponse)
+def privacy(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "privacy.html")
+
+
 @app.get("/ui/search", response_class=HTMLResponse)
 def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Response:
     q = q.strip()
@@ -351,10 +356,23 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
             return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
     results = []
     if q:
+        like = f"%{q}%"
+        # VT-style: match file names, any hash (full or partial), and any stored
+        # indicator (URLs, domains, IPs, emails, registry keys, BTC addresses)
         results = (
             db.execute(
                 select(Scan)
-                .where(Scan.file_name.ilike(f"%{q}%"))
+                .where(
+                    or_(
+                        Scan.file_name.ilike(like),
+                        Scan.sha256.ilike(like),
+                        Scan.md5.ilike(like),
+                        Scan.sha1.ilike(like),
+                        Scan.sha512.ilike(like),
+                        Scan.urls.cast(String).ilike(like),
+                        Scan.iocs.cast(String).ilike(like),
+                    )
+                )
                 .order_by(Scan.scanned_at.desc())
                 .limit(50)
             )

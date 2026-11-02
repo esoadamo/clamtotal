@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Privacy policy — ClamTotal{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 style="font-size:20px; text-transform:none; letter-spacing:0; color:var(--text)">Privacy policy</h2>
+  <p>ClamTotal is a self-hosted file-analysis service. It is designed so that <strong>nothing leaves your machine or your server</strong>.</p>
+
+  <h3 class="section-title" style="margin-top:20px">What we collect</h3>
+  <ul>
+    <li><strong>Files you upload</strong> — stored locally (by SHA-256) only as long as <code>UPLOADS_TTL</code> says: forever by default (<code>-1</code>), deleted right after scanning (<code>0</code>), or kept for N minutes. A background job prunes them every minute.</li>
+    <li><strong>Scan metadata</strong> — file name(s), hashes, verdicts, extracted indicators (URLs, domains, IPs, emails, registry keys) and static-analysis results, stored in the local SQLite database on your server.</li>
+  </ul>
+
+  <h3 class="section-title" style="margin-top:20px">What we do not do</h3>
+  <ul>
+    <li>No accounts, no login, no cookies, no analytics, no tracking, no telemetry.</li>
+    <li>No data is sent to any third party. Scanning (ClamAV + local YARA rules) and all analysis run entirely on your own infrastructure — the app works fully offline.</li>
+    <li>Extracted indicators are <strong>defanged</strong> in the UI (<code>hxxp://</code>, <code>[.]</code>) so they are never fetched or clicked accidentally.</li>
+    <li>No samples or metadata are shared with anyone, including antivirus vendors.</li>
+  </ul>
+
+  <h3 class="section-title" style="margin-top:20px">Your controls</h3>
+  <ul>
+    <li>Set <code>UPLOADS_TTL=0</code> to never keep uploaded files on disk.</li>
+    <li>Set <code>SHOW_RECENT_SCANS=false</code> to hide the recent-scans list.</li>
+    <li>Delete the database and upload directory at any time to erase all records.</li>
+  </ul>
+
+  <h3 class="section-title" style="margin-top:20px">Security note</h3>
+  <p>Uploaded files may be malicious. ClamTotal is meant to run in an isolated environment (e.g. a container with no access to sensitive data), exactly like the real VirusTotal is used.</p>
+</div>
+{% endblock %}

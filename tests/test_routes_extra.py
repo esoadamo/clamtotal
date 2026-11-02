@@ -186,3 +186,45 @@ def test_upload_ttl_zero_deletes_sample_after_scan(client, monkeypatch, tmp_path
     # report still works (metadata kept in DB); download 404s
     assert client.get(f"/ui/file/{sha}").status_code == 200
     assert client.get(f"/ui/file/{sha}/download").status_code == 404
+
+
+def test_search_by_domain_ip_url_and_partial_hash(client):
+    import time
+
+    content = (
+        b"indicator rich sample http://evil-example.com/payload 185.220.101.4 bad@evil-example.com"
+    )
+    client.post("/file/upload", files={"file": ("evil.bin", content)})
+    sha = hashlib.sha256(content).hexdigest()
+    for _ in range(30):
+        if client.get(f"/api/v2/files/{sha}").json()["status"] == "done":
+            break
+        time.sleep(0.2)
+    for q in [
+        "evil-example.com",
+        "185.220.101.4",
+        "evil-example.com/payload",
+        "bad@evil-example.com",
+        sha[:16],
+        sha,
+    ]:
+        page = client.get("/ui/search", params={"q": q})
+        assert page.status_code in (200, 303), q
+        if page.status_code == 200:
+            assert "evil.bin" in page.text, f"q={q} did not find the file"
+
+
+def test_search_no_false_positives(client):
+    client.post("/file/upload", files={"file": ("plain.bin", b"nothing here")})
+    page = client.get("/ui/search", params={"q": "totally-unrelated-xyz"})
+    assert page.status_code == 200
+    assert "No results found" in page.text
+
+
+def test_privacy_policy_page(client):
+    page = client.get("/ui/privacy")
+    assert page.status_code == 200
+    assert "Privacy policy" in page.text
+    assert "UPLOADS_TTL" in page.text
+    # linked from every page footer
+    assert 'href="/ui/privacy"' in client.get("/ui/").text
