@@ -25,6 +25,7 @@ Features (all fully offline, no login, no community features):
   (re-uploading the same file returns the cached report instantly)
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
 - Search by MD5/SHA-1/SHA-256 or file name, sample download, forced rescan
+- UI is served under `/ui/` (home, file reports, search); `/` redirects there. API: `POST /file/upload`, `/api/v2/...`
 - Minimal VT-compatible JSON API: `POST /api/v2/files` (returns `202` + `sha256` and
   scans asynchronously, or `200` with `cached: true` if the hash was already
   analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`)
@@ -44,7 +45,7 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
-Open http://127.0.0.1:8000 — try uploading the
+Open http://127.0.0.1:8000/ui/ — try uploading the
 [EICAR test file](https://en.wikipedia.org/wiki/EICAR_test_file) to see a detection.
 
 ## Podman (container mode with clamd)
@@ -82,6 +83,7 @@ original ruleset is bundled in `app/rules/public.yar`.
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`) |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
+| `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
 
 ## Development
 

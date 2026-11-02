@@ -16,7 +16,7 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 
 ## Layout
 
-- `app/main.py` — FastAPI app, routes (HTML UI + `/api/v2/...` JSON API)
+- `app/main.py` — FastAPI app: HTML UI under `/ui/` + JSON API (`/file/upload`, `/api/v2/...`)
 - `app/config.py` — env-based settings (pydantic-settings)
 - `app/db.py` — engine, `SessionLocal`, `get_db`, `Base`
 - `app/models.py` — `Scan` table (hashes, verdict, signature, URLs, ...)
