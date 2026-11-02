@@ -23,7 +23,7 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `app/scanner.py` — `ClamdScanner` / `ClamscanScanner` (Scanner protocol) + `YaraScanner` (local public rules)
 - `app/analysis.py` — hashing (MD5/SHA-1/SHA-256/SHA-512/CRC32), IOC extraction (URLs, domains, IPs, emails, registry keys, BTC), PE/ELF/PDF/Office parsing, suspicious strings, archive extraction
 - `app/rules/` — bundled original public YARA rules (mounted at `/rules` in the container)
-- `scripts/update-signatures.sh`, `container/fangfrisch.conf` — official (freshclam) + unofficial (SaneSecurity, incl. YARA) signature updates; `CLAM_AUTOUPDATE=false` for airgapped
+- `scripts/update-signatures.sh` + `scripts/update-unofficial-sigs.sh`, `container/fangfrisch.conf` — official (freshclam) + unofficial (SaneSecurity via fangfrisch, extremeshok/clamav-unofficial-sigs via git) signature updates; `CLAM_AUTOUPDATE=false` for airgapped. Build context is restricted by `.containerignore` so no secrets enter the image
 - `app/templates/` — UI pages (`base`, `index`, `report`, `search`, `not_found`)
 - `app/static/app.js` — all frontend JS (exports pure functions on `window.ClamTotal`); tested by `node --test tests/js/app.test.mjs`
 - `tests/test_frontend.py` — asserts the rendered HTML matches the DOM contract app.js expects

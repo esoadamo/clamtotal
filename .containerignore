@@ -1,0 +1,26 @@
+# Podman reads .containerignore (falls back to .dockerignore) — keep secrets and
+# local state out of the image build context.
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+*.db
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.agent
+# secrets and local config — must never enter the image
+.env
+.env*
+!.env.example
+*.pem
+*.key
+*.crt
+*secret*
+*credential*
+id_rsa*
+*.kdbx
+uploads/
+/data/

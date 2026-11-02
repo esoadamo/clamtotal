@@ -20,7 +20,8 @@ ENV UV_COMPILE_BYTECODE=1 \
     CLAM_AUTOUPDATE=true
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends clamav clamav-daemon clamav-freshclam curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+         clamav clamav-daemon clamav-freshclam curl ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -31,10 +32,10 @@ RUN uv sync --frozen --no-dev --group signatures
 
 # Unofficial signature DBs (SaneSecurity etc., includes YARA rules) via fangfrisch.
 COPY container/fangfrisch.conf /etc/fangfrisch.conf
-COPY scripts/update-signatures.sh /usr/local/bin/update-signatures.sh
-RUN chmod +x /usr/local/bin/update-signatures.sh \
+COPY scripts/update-signatures.sh scripts/update-unofficial-sigs.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficial-sigs.sh \
     && fangfrisch --conf /etc/fangfrisch.conf initdb \
-    && if [ "$AIRGAPPED" != "true" ]; then update-signatures.sh; \
+    && if [ "$AIRGAPPED" != "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
          else echo "AIRGAPPED build: skipping signature downloads — bake signatures into /var/lib/clamav"; fi
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).

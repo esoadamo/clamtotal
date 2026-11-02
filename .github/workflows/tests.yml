@@ -63,6 +63,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Containerfile  # the image manifest is a Containerfile, not Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/clamtotal:latest

@@ -242,3 +242,14 @@ def test_privacy_policy_is_user_focused(client):
         "your machine",
     ]:
         assert banned not in page.lower(), banned
+
+
+def test_containerignore_keeps_secrets_out():
+    from pathlib import Path
+
+    ignore = Path(".containerignore").read_text()
+    for pattern in [".env", ".env*", "*.pem", "*.key", "*secret*", "*credential*", ".git"]:
+        assert pattern in ignore, pattern
+    # the build must reference the Containerfile name explicitly in CI
+    wf = Path(".github/workflows/tests.yml").read_text()
+    assert "file: Containerfile" in wf
