@@ -3,7 +3,7 @@
 {% block content %}
 <div class="card">
   <h2>File not found</h2>
-  <p class="muted">No scan report exists for <span class="hash">{{ hash_value }}</span>.</p>
-  <p>Upload the file from the <a href="/">home page</a> to scan it with ClamAV.</p>
+  <p class="muted">No analysis report exists for <span class="mono">{{ hash_value }}</span>.</p>
+  <p><a class="btn" href="/">Upload the file to analyze it</a></p>
 </div>
 {% endblock %}

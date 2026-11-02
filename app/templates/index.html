@@ -1,32 +1,61 @@
 {% extends "base.html" %}
-{% block title %}ClamTotal — file scanner{% endblock %}
+{% block title %}ClamTotal — file analysis{% endblock %}
 {% block content %}
-<div class="card hero">
-  <h1>Analyze suspicious files</h1>
-  <p>Upload a file to scan it with ClamAV, or search a hash from a previous scan.</p>
-  <form class="upload-form" action="/file/upload" method="post" enctype="multipart/form-data">
-    <input type="file" name="file" required>
-    <button class="btn" type="submit">Upload and scan</button>
+<h1 class="hero-title">Analyze suspicious files and URLs</h1>
+<div class="card">
+  <form action="/file/upload" method="post" enctype="multipart/form-data">
+    <div class="dropzone" id="dropzone">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <div class="dz-title">Drag and drop a file here to scan it</div>
+      <div>Maximum file size: 512 MB</div>
+      <div class="dz-or">or</div>
+      <label class="btn" for="file-input">Browse files</label>
+      <input id="file-input" type="file" name="file" required style="display:none" onchange="this.form.submit()">
+    </div>
   </form>
 </div>
+{% if recent %}
 <div class="card">
-  <h2>Recently scanned files</h2>
-  {% if recent %}
+  <h2>Recently analyzed files</h2>
   <table>
-    <thead><tr><th>File name</th><th>SHA-256</th><th>Detections</th><th>Scanned</th></tr></thead>
+    <thead><tr><th>File name</th><th>SHA-256</th><th>Detection</th><th>Last analysis</th></tr></thead>
     <tbody>
       {% for scan in recent %}
       <tr>
         <td><a href="/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
-        <td class="hash">{{ scan.sha256[:16] }}…</td>
-        <td><span class="badge {{ scan.verdict }}">{{ "1/1 infected" if scan.verdict == "infected" else "0/1 clean" }}</span></td>
-        <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</td>
+        <td class="mono">{{ scan.sha256[:20] }}…</td>
+        <td>
+          {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}
+          {% set total = (scan.engines or []) | length %}
+          <span class="badge {{ 'malicious' if det else 'harmless' }}">{{ det }}/{{ total }}</span>
+        </td>
+        <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p class="muted">No files scanned yet — upload one above.</p>
-  {% endif %}
 </div>
+{% endif %}
+<script>
+(function () {
+  var dz = document.getElementById('dropzone');
+  if (!dz) return;
+  ['dragover', 'dragenter'].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#0b4dda'; });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = ''; });
+  });
+  dz.addEventListener('drop', function (e) {
+    var input = document.getElementById('file-input');
+    if (e.dataTransfer.files.length) {
+      input.files = e.dataTransfer.files;
+      input.form.submit();
+    }
+  });
+})();
+</script>
 {% endblock %}
