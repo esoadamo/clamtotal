@@ -221,7 +221,9 @@ def parse_pe(data: bytes) -> dict | None:
             if off:
                 idx = 0
                 while off + idx * 20 + 20 <= len(data):
-                    name_rva, _, _, _, fwd = struct.unpack_from("<IIIII", data, off + idx * 20)
+                    orig_thunk, _, _, name_rva, fwd = struct.unpack_from(
+                        "<IIIII", data, off + idx * 20
+                    )
                     if name_rva == 0:
                         break
                     name_off = _rva_to_offset(
@@ -230,7 +232,7 @@ def parse_pe(data: bytes) -> dict | None:
                     if not name_off:
                         break
                     dll = _read_cstring(name_off).lower()
-                    thunk_rva = fwd or struct.unpack_from("<I", data, off + idx * 20 + 16)[0]
+                    thunk_rva = orig_thunk or fwd
                     thunk_off = _rva_to_offset(
                         thunk_rva, [(va, vs, ro, rs) for va, vs, ro, rs, _ in sections]
                     )
@@ -300,7 +302,7 @@ def parse_pe(data: bytes) -> dict | None:
                     tls_callbacks.append(hex(cb))
                     t += 1
 
-        rich = b"Rich" in data[0x80:pe_offset] if pe_offset > 0x80 else False
+        rich = b"Rich" in data[0x40:pe_offset] if pe_offset > 0x40 else False
         suspicious = sorted(
             s
             for s in find_suspicious_strings(data)
@@ -337,11 +339,11 @@ def parse_elf(data: bytes) -> dict | None:
         is64 = data[4] == 2
         endian = "<" if data[5] == 1 else ">"
         if is64:
-            _, _, _, _, _, shoff, _, _, shentsize, shnum = struct.unpack_from(
+            _, _, _, _, _, shoff, _, _, _, _, shentsize, shnum, shstrndx = struct.unpack_from(
                 endian + "HHIQQQIHHHHHH", data, 16
             )
         else:
-            _, _, _, _, _, shoff, _, _, shentsize, shnum = struct.unpack_from(
+            _, _, _, _, _, shoff, _, _, _, _, shentsize, shnum, shstrndx = struct.unpack_from(
                 endian + "HHIIIIIHHHHHH", data, 16
             )
         sections = []
@@ -356,7 +358,7 @@ def parse_elf(data: bytes) -> dict | None:
                     endian + "IIIIII", data, base
                 )
             sections.append((name_off, sh_type, offset, size))
-        shstr = next((s for s in sections if s[1] == 3), None)
+        shstr = sections[shstrndx] if 0 <= shstrndx < len(sections) else None
         names = data[shstr[2] : shstr[2] + shstr[3]] if shstr else b""
 
         def _secname(off: int) -> str:
@@ -469,7 +471,7 @@ def list_archive_members(data: bytes, limit: int = 100) -> list[dict] | None:
                 return [
                     {"name": m.name, "size": m.size} for m in tf.getmembers()[:limit] if m.isfile()
                 ]
-    except (zipfile.BadZipFile, tarfile.TarError, OSError):
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, EOFError):
         return None
     return None
 
@@ -491,6 +493,6 @@ def extract_embedded_files(data: bytes, limit: int = 10) -> list[tuple[str, byte
                         fh = tf.extractfile(m)
                         if fh:
                             out.append((m.name, fh.read()))
-    except (zipfile.BadZipFile, tarfile.TarError, OSError):
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, EOFError):
         return []
     return out
