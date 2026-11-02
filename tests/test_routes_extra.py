@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 from app.config import settings
 from app.scanner import ScannerUnavailableError, get_scanner
@@ -112,3 +113,76 @@ def test_raw_scanner_output_not_shown(client):
 def test_no_airgapped_messaging(client):
     assert "airgapped" not in client.get("/ui/").text.lower()
     assert "offline" not in client.get("/ui/").text.lower()
+
+
+def test_favicon_served(client):
+    response = client.get("/favicon.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
+    assert 'href="/favicon.svg"' in client.get("/ui/").text
+
+
+def test_pending_page_uses_configured_poll_interval(client, monkeypatch):
+    monkeypatch.setattr(settings, "scan_poll_interval_ms", 7000)
+    sha = "ef" * 32
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha,
+                md5="2" * 32,
+                sha1="2" * 40,
+                file_name="poll.bin",
+                size=1,
+                file_type="data",
+                magic_hex="",
+                verdict="pending",
+                status="pending",
+                engine="pending",
+                urls=[],
+            )
+        )
+        db.commit()
+    assert "}, 7000);" in client.get(f"/ui/file/{sha}").text
+
+
+def test_prune_uploads_ttl(tmp_path, monkeypatch):
+    from app.main import _prune_uploads
+
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    old = tmp_path / "old.bin"
+    new = tmp_path / "new.bin"
+    old.write_bytes(b"old")
+    new.write_bytes(b"new")
+    import os
+    import time
+
+    old_ts = time.time() - 3600
+    os.utime(old, (old_ts, old_ts))
+
+    monkeypatch.setattr(settings, "uploads_ttl", -1)
+    _prune_uploads()
+    assert old.exists() and new.exists()  # kept forever
+
+    monkeypatch.setattr(settings, "uploads_ttl", 1)  # 1 minute
+    _prune_uploads()
+    assert not old.exists() and new.exists()
+
+    monkeypatch.setattr(settings, "uploads_ttl", 0)  # delete immediately
+    _prune_uploads()
+    assert not new.exists()
+
+
+def test_upload_ttl_zero_deletes_sample_after_scan(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "uploads_ttl", 0)
+    content = b"ttl zero sample"
+    client.post("/file/upload", files={"file": ("ttl0.bin", content)})
+    sha = hashlib.sha256(content).hexdigest()
+    stored = Path(settings.upload_dir) / sha
+    assert not stored.exists()  # deleted right after the async scan
+    # report still works (metadata kept in DB); download 404s
+    assert client.get(f"/ui/file/{sha}").status_code == 200
+    assert client.get(f"/ui/file/{sha}/download").status_code == 404

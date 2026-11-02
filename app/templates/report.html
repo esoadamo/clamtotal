@@ -14,7 +14,7 @@
     fetch('/api/v2/files/' + sha).then(function (r) { return r.json(); }).then(function (data) {
       if (data.status === 'done') { clearInterval(timer); window.location.reload(); }
     }).catch(function () {});
-  }, 1000);
+  }, {{ poll_interval | default(3000) }});
 })();
 </script>
 {% else %}
@@ -163,15 +163,15 @@
     {% set iocs = scan.iocs or {} %}
     {% if scan.urls %}
     <h2 class="section-title">URLs ({{ scan.urls | length }})</h2>
-    <ul class="ioc">{% for url in scan.urls %}<li><a href="{{ url }}">{{ url }}</a></li>{% endfor %}</ul>
+    <ul class="ioc mono">{% for url in scan.urls %}<li>{{ url | defang }}</li>{% endfor %}</ul>
     {% endif %}
     {% if iocs.domains %}
     <h2 class="section-title">Domains ({{ iocs.domains | length }})</h2>
-    <ul class="ioc">{% for d in iocs.domains %}<li>{{ d }}{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</li>{% endfor %}</ul>
+    <ul class="ioc mono">{% for d in iocs.domains %}<li>{{ d | defang }}{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</li>{% endfor %}</ul>
     {% endif %}
     {% if iocs.ips %}
     <h2 class="section-title">Contacted IP addresses ({{ iocs.ips | length }})</h2>
-    <ul class="ioc">{% for ip in iocs.ips %}<li>{{ ip }}</li>{% endfor %}</ul>
+    <ul class="ioc mono">{% for ip in iocs.ips %}<li>{{ ip | defang }}</li>{% endfor %}</ul>
     {% endif %}
     {% if iocs.emails %}
     <h2 class="section-title">Email addresses ({{ iocs.emails | length }})</h2>

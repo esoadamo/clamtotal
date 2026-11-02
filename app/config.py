@@ -27,5 +27,11 @@ class Settings(BaseSettings):
     # show the "recently analyzed files" list on the home page
     show_recent_scans: bool = True
 
+    # how long uploaded samples are kept locally, in minutes:
+    # -1 = indefinitely, 0 = delete right after upload+scan, N = keep N minutes
+    uploads_ttl: int = -1
+    # how often the report page polls for scan progress while pending
+    scan_poll_interval_ms: int = 3000
+
 
 settings = Settings()

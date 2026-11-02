@@ -42,8 +42,9 @@ def test_extract_iocs_punycode_flagged():
 
 
 def test_extract_iocs_only_real_tlds():
-    iocs = extract_iocs(b"visit foo.notarealtld and bar.example and baz.com")
-    assert "baz.com" in iocs["domains"]
+    iocs = extract_iocs(b"visit foo.notarealtld and bar.example and baz.com and bazzinga.com")
+    assert "bazzinga.com" in iocs["domains"]
+    assert "baz.com" not in iocs["domains"]  # second-level label too short (<5)
     assert "foo.notarealtld" not in iocs["domains"]
     assert "bar.example" not in iocs["domains"]  # .example is reserved, not in the IANA list
 
@@ -94,3 +95,8 @@ def test_archive_listing_and_embedded_extraction():
 def test_sniff_file_type():
     assert sniff_file_type(b"%PDF-1.7")[0] == "PDF document"
     assert sniff_file_type(b"plain text here")[0] == "ASCII text"
+
+
+def test_ip_not_confused_with_version():
+    iocs = extract_iocs(b"built with version 1.2.3.4 and v2.0.0.1 but reach 8.8.8.8")
+    assert iocs["ips"] == ["8.8.8.8"]

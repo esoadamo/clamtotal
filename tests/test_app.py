@@ -33,7 +33,8 @@ def test_upload_returns_hash_and_report_renders(client):
     assert report.status_code == 200
     assert "clean.bin" in report.text
     assert "0/1" in report.text
-    assert "https://example.org/malware-report" in report.text
+    assert "hxxps://example[.]org/malware-report" in report.text  # defanged in the UI
+    assert 'href="https://example.org' not in report.text
 
 
 def test_upload_eicar_is_detected(client):

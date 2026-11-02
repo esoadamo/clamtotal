@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}ClamTotal — file analysis{% endblock %}
 {% block content %}
-<h1 class="hero-title">Analyze suspicious files and URLs</h1>
+<h1 class="hero-title">Analyze suspicious <em>files</em> and URLs</h1>
 <div class="card">
   <form id="upload-form" action="/ui/file/upload" method="post" enctype="multipart/form-data">
     <div class="dropzone" id="dropzone">
       <div id="dz-idle">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0b4dda" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0f766e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0f766e" stroke-width="1.6" stroke-linecap="round"/>
         </svg>
         <div class="dz-title">Drag and drop a file here to scan it</div>
         <div>Maximum file size: 512 MB</div>
@@ -148,7 +148,7 @@
   });
   form.addEventListener('submit', function (e) { e.preventDefault(); });
   ['dragover', 'dragenter'].forEach(function (ev) {
-    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#0b4dda'; });
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#d97706'; });
   });
   ['dragleave', 'drop'].forEach(function (ev) {
     dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = ''; });

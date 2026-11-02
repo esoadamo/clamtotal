@@ -114,6 +114,10 @@ def extract_iocs(data: bytes, limit: int = 500) -> dict[str, list[str]]:
 
     for m in _IPV4_RE.finditer(data):
         raw = m.group(0).decode()
+        # do not confuse a program version (e.g. "version 1.2.3.4", "v1.2.3.4") with an IP
+        context = data[max(0, m.start() - 10) : m.start()].lower().rstrip()
+        if context.endswith(b"version") or context.endswith(b"v"):
+            continue
         try:
             ip = ipaddress.ip_address(raw)
         except ValueError:
@@ -121,7 +125,10 @@ def extract_iocs(data: bytes, limit: int = 500) -> dict[str, list[str]]:
         _add(ips, f"{ip} (private)" if ip.is_private else str(ip))
     for m in _DOMAIN_RE.finditer(data):
         domain = m.group(0).decode("latin-1").lower().rstrip(".")
-        if domain.rsplit(".", 1)[-1] in _TLDS:  # only real, existing TLDs
+        parts = domain.split(".")
+        sld = parts[-2] if len(parts) >= 2 else ""
+        # only real TLDs, and a second-level label of at least 5 chars (fewer = false positives)
+        if parts[-1] in _TLDS and len(sld) >= 5:
             _add(domains, domain)
     for m in _EMAIL_RE.finditer(data):
         _add(emails, m.group(0).decode("latin-1"))

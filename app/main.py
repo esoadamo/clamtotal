@@ -1,4 +1,8 @@
 import re
+import threading
+import time
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -26,12 +30,55 @@ from app.db import SessionLocal, get_db
 from app.models import Scan
 from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
 
-app = FastAPI(title="ClamTotal", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    def loop() -> None:
+        while True:
+            _prune_uploads()
+            time.sleep(60)
+
+    threading.Thread(target=loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="ClamTotal", version="0.1.0", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _defang(value: str) -> str:
+    """Defang an indicator so it is displayed as text and never loaded by accident."""
+    return value.replace("http", "hxxp").replace(".", "[.]")
+
+
+templates.env.filters["defang"] = _defang
 
 Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 
 _HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
+
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#0f766e"/>'
+    '<path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#fbbf24" stroke-width="3" fill="none" '
+    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon() -> Response:
+    return Response(_FAVICON_SVG, media_type="image/svg+xml")
+
+
+def _prune_uploads() -> None:
+    """Delete stored samples past their TTL. ttl=-1 keeps them forever, 0 deletes immediately."""
+    ttl = settings.uploads_ttl
+    if ttl < 0:
+        return
+    now = time.time()
+    for f in Path(settings.upload_dir).iterdir():
+        if f.is_file() and (ttl == 0 or now - f.stat().st_mtime > ttl * 60):
+            f.unlink(missing_ok=True)
 
 
 @app.exception_handler(ScannerUnavailableError)
@@ -158,7 +205,9 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
 def _run_scan(data: bytes, file_name: str) -> None:
     """Background task: scan with all engines and mark the row done."""
     with SessionLocal() as db:
-        _scan_and_store(db, get_scanner(), data, file_name, rescan=True)
+        scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True)
+    if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
+        (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
 
 
 def _enqueue_scan(
@@ -244,7 +293,13 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     return templates.TemplateResponse(
         request,
         "report.html",
-        {"scan": scan, "entropy": entropy, "relations": relations[:10], "pending": pending},
+        {
+            "scan": scan,
+            "entropy": entropy,
+            "relations": relations[:10],
+            "pending": pending,
+            "poll_interval": settings.scan_poll_interval_ms,
+        },
     )
 
 
