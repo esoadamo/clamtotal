@@ -9,32 +9,20 @@ os.environ["UPLOAD_DIR"] = str(_tmp / "uploads")
 os.environ["CLAM_MODE"] = "cli"
 
 import pytest  # noqa: E402
+from fakes import FakeScanner, fake_scanner  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.db import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.scanner import ScanResult, get_scanner  # noqa: E402
+from app.scanner import get_scanner  # noqa: E402
 
 Base.metadata.create_all(engine)
 
-
-class FakeScanner:
-    engine = "ClamAV (fake)"
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def scan(self, data: bytes) -> ScanResult:
-        self.calls += 1
-        if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in data:
-            return ScanResult(
-                "infected", "Win.Test.EICAR_HDB-1", self.engine, "stdin: Win.Test.EICAR_HDB-1 FOUND"
-            )
-        return ScanResult("clean", None, self.engine, "stdin: OK")
-
-
-fake_scanner = FakeScanner()
 app.dependency_overrides[get_scanner] = lambda: fake_scanner
+# background scan tasks call get_scanner() directly, so patch the module global too
+import app.main as main_module  # noqa: E402
+
+main_module.get_scanner = lambda: fake_scanner  # ty: ignore[invalid-assignment]
 
 
 @pytest.fixture

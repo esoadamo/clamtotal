@@ -2,11 +2,11 @@ import socket
 import struct
 
 import pytest
+from test_parsers import _minimal_pe32
+from test_scanner import FakeSocket
 
 from app.analysis import parse_pe
 from app.scanner import ClamdScanner, ScannerUnavailableError
-from tests.test_parsers import _minimal_pe32
-from tests.test_scanner import FakeSocket
 
 
 def test_parse_pe_import_name_outside_sections():

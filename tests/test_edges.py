@@ -2,6 +2,8 @@ import io
 import struct
 import zipfile
 
+from test_parsers import _minimal_elf64, _minimal_pe32
+
 from app.analysis import (
     _rva_to_offset,
     extract_iocs,
@@ -13,7 +15,6 @@ from app.analysis import (
     shannon_entropy,
     sniff_file_type,
 )
-from tests.test_parsers import _minimal_elf64, _minimal_pe32
 
 
 def test_extract_urls_limit():

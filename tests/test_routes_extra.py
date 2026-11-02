@@ -31,7 +31,7 @@ def test_upload_scanner_unavailable_503(client, monkeypatch):
         assert response.status_code == 503
         assert "no backend" in response.json()["detail"]
     finally:
-        from tests.conftest import fake_scanner
+        from fakes import fake_scanner
 
         app.dependency_overrides[get_scanner] = lambda: fake_scanner
 

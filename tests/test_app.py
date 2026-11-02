@@ -11,7 +11,9 @@ def clean_file(marker: bytes = b"") -> bytes:
 
 
 def _upload(client, content: bytes, filename: str = "sample.bin"):
-    return client.post("/file/upload", files={"file": (filename, content)}, follow_redirects=False)
+    """Upload via the async endpoint; returns (sha256, response). Scan runs as a background task."""
+    response = client.post("/file/upload", files={"file": (filename, content)})
+    return hashlib.sha256(content).hexdigest(), response
 
 
 def test_index_lists_recent_scans(client):
@@ -21,12 +23,11 @@ def test_index_lists_recent_scans(client):
     assert "first.bin" in response.text
 
 
-def test_upload_clean_file_redirects_to_report(client):
+def test_upload_returns_hash_and_report_renders(client):
     content = clean_file(b"clean")
-    response = _upload(client, content, "clean.bin")
-    sha256 = hashlib.sha256(content).hexdigest()
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/file/{sha256}"
+    sha256, response = _upload(client, content, "clean.bin")
+    assert response.status_code == 202
+    assert response.json()["sha256"] == sha256
 
     report = client.get(f"/file/{sha256}")
     assert report.status_code == 200
@@ -36,9 +37,8 @@ def test_upload_clean_file_redirects_to_report(client):
 
 
 def test_upload_eicar_is_detected(client):
-    response = _upload(client, EICAR, "eicar.com")
-    sha256 = hashlib.sha256(EICAR).hexdigest()
-    assert response.status_code == 303
+    sha256, response = _upload(client, EICAR, "eicar.com")
+    assert response.status_code == 202
     report = client.get(f"/file/{sha256}")
     assert "1/1" in report.text
     assert "Win.Test.EICAR_HDB-1" in report.text
@@ -52,8 +52,7 @@ def test_results_are_cached(client, fake):
 
 
 def test_rescan_forces_new_scan(client, fake):
-    _upload(client, b"rescan me", "rescan.bin")
-    sha256 = hashlib.sha256(b"rescan me").hexdigest()
+    sha256, _ = _upload(client, b"rescan me", "rescan.bin")
     calls_before = fake.calls
     response = client.post(f"/file/{sha256}/rescan", follow_redirects=False)
     assert response.status_code == 303
@@ -62,8 +61,7 @@ def test_rescan_forces_new_scan(client, fake):
 
 def test_search_by_hash_redirects(client):
     content = clean_file(b"search")
-    _upload(client, content, "searchable.bin")
-    sha256 = hashlib.sha256(content).hexdigest()
+    sha256, _ = _upload(client, content, "searchable.bin")
     response = client.get("/search", params={"q": sha256}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == f"/file/{sha256}"
@@ -92,10 +90,12 @@ def test_unknown_report_returns_404(client):
 def test_api_upload_and_report(client):
     content = clean_file(b"api")
     response = client.post("/api/v2/files", files={"file": ("api.bin", content)})
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
     sha256 = hashlib.sha256(content).hexdigest()
     assert payload["sha256"] == sha256
+    assert payload["status"] == "pending"  # scan is async; row flips to done in the background
+    assert client.get(f"/api/v2/files/{sha256}").json()["status"] == "done"
 
     report = client.get(f"/api/v2/files/{sha256}")
     assert report.status_code == 200

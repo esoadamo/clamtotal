@@ -12,11 +12,9 @@ def test_yara_engine_adds_detection(client, monkeypatch, tmp_path):
     )
     monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
     content = b"this file contains MALWARE-MARKER-XYZ inside"
-    response = client.post(
-        "/file/upload", files={"file": ("marked.bin", content)}, follow_redirects=False
-    )
+    response = client.post("/file/upload", files={"file": ("marked.bin", content)})
     sha256 = hashlib.sha256(content).hexdigest()
-    assert response.headers["location"] == f"/file/{sha256}"
+    assert response.json()["sha256"] == sha256
     report = client.get(f"/api/v2/files/{sha256}").json()
     engine_names = [e["name"] for e in report["engines"]]
     assert any("YARA" in n for n in engine_names)
