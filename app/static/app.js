@@ -66,6 +66,39 @@
     return Promise.resolve(sha256HexPure(new Uint8Array(buf)));
   }
 
+  /* Read the file in chunks, reporting progress, then hash it. */
+  function hashFileWithProgress(file, onProgress) {
+    var CHUNK = 4 * 1024 * 1024;
+    var parts = [];
+    var loaded = 0;
+    function readNext(offset) {
+      if (offset >= file.size) {
+        return mergeParts(parts).then(function (all) { return sha256Hex(all); });
+      }
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        var slice = file.slice(offset, Math.min(offset + CHUNK, file.size));
+        reader.onload = function () {
+          parts.push(reader.result);
+          loaded += slice.size;
+          if (onProgress) onProgress(Math.min(100, Math.round((loaded / file.size) * 100)));
+          resolve();
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(slice);
+      }).then(function () { return readNext(offset + CHUNK); });
+    }
+    function mergeParts(arr) {
+      var total = arr.reduce(function (n, p) { return n + p.byteLength; }, 0);
+      var out = new Uint8Array(total);
+      var off = 0;
+      arr.forEach(function (p) { out.set(new Uint8Array(p), off); off += p.byteLength; });
+      return Promise.resolve(out.buffer);
+    }
+    if (file.size === 0) return Promise.resolve(sha256Hex(new ArrayBuffer(0)));
+    return readNext(0);
+  }
+
   function defang(value) {
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
@@ -162,8 +195,14 @@
 
     function onFileSelected(file) {
       if (errorBox) errorBox.style.display = 'none';
-      if (status) status.textContent = 'Hashing ' + file.name + '…';
-      file.arrayBuffer().then(sha256Hex).then(function (sha256) {
+      openModal('Hashing ' + file.name + '…',
+        '<div class="spinner" style="margin:8px auto 0"></div>' +
+        '<div class="dz-status" id="hash-status">Hashing… 0%</div>' +
+        '<div class="progress-track"><div class="progress-bar" id="hash-bar"></div></div>');
+      hashFileWithProgress(file, function (pct) {
+        var s = $('hash-status'); if (s) s.textContent = 'Hashing… ' + pct + '%';
+        var b = $('hash-bar'); if (b) b.style.width = pct + '%';
+      }).then(function (sha256) {
         global.fetch('/api/v2/files/' + sha256).then(function (resp) {
           if (resp.ok) { global.location.href = '/ui/file/' + sha256; return; }
           pendingFile = { file: file, sha256: sha256 };
@@ -198,6 +237,7 @@
   global.ClamTotal = {
     sha256Hex: sha256Hex,
     sha256HexPure: sha256HexPure,
+    hashFileWithProgress: hashFileWithProgress,
     defang: defang,
     openModal: openModal,
     closeModal: closeModal,

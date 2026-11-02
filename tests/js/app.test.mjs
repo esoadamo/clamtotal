@@ -117,3 +117,49 @@ test('initTabs wires tab clicks with a DOM stub', () => {
   assert.ok(!panelA.classList._set.has('active'));
   delete globalThis.document;
 });
+
+test('hashFileWithProgress reports progress and returns the right hash', async () => {
+  const data = new TextEncoder().encode('x'.repeat(9 * 1024 * 1024)); // > 2 chunks of 4MB
+  const file = {
+    size: data.length,
+    slice: (a, b) => ({ size: b - a, _buf: data.slice(a, b) }),
+  };
+  globalThis.FileReader = class {
+    readAsArrayBuffer(slice) {
+      this.result = slice._buf.buffer.slice(slice._buf.byteOffset, slice._buf.byteOffset + slice._buf.length);
+      queueMicrotask(() => this.onload());
+    }
+  };
+  const pcts = [];
+  const hash = await CT.hashFileWithProgress(file, (p) => pcts.push(p));
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.equal(hash, CT.sha256HexPure(data));
+  assert.ok(pcts.length >= 2, 'multiple progress callbacks');
+  assert.equal(pcts[pcts.length - 1], 100);
+  assert.ok(pcts.every((p, i, arr) => i === 0 || p >= arr[i - 1]), 'monotonic');
+  delete globalThis.FileReader;
+});
+
+test('hashFileWithProgress handles empty file', async () => {
+  const file = { size: 0, slice: () => { throw new Error('no slice'); } };
+  const hash = await CT.hashFileWithProgress(file, () => {});
+  assert.equal(hash, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+});
+
+test('onFileSelected shows hashing modal first (DOM contract)', () => {
+  const ids = ['modal-overlay', 'modal-title', 'modal-body'];
+  const els = {};
+  ids.forEach((id) => {
+    els[id] = {
+      classList: { _open: false, add(c) { this._open = c === 'open'; }, remove() { this._open = false; } },
+      textContent: '',
+      innerHTML: '',
+    };
+  });
+  globalThis.document = { getElementById: (id) => els[id] || null, querySelectorAll: () => [] };
+  CT.openModal('Hashing a.bin…', '<div class="spinner"></div>');
+  assert.equal(els['modal-overlay'].classList._open, true);
+  assert.match(els['modal-title'].textContent, /Hashing/);
+  assert.match(els['modal-body'].innerHTML, /spinner/);
+  delete globalThis.document;
+});

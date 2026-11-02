@@ -125,3 +125,11 @@ def test_og_card_image_served(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/svg+xml")
     assert 'width="1200"' in response.text and 'height="630"' in response.text
+
+
+def test_modal_has_spinner_and_progress_styles(client):
+    home = client.get("/ui/").text
+    assert '<div class="modal-overlay" id="modal-overlay">' in home
+    assert ".spinner" in home  # hashing/upload spinners
+    assert ".progress-bar" in home
+    assert "ct-spin" in home
