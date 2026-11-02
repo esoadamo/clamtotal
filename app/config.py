@@ -18,5 +18,11 @@ class Settings(BaseSettings):
     clamscan_path: str = "clamscan"
     clamscan_timeout: int = 600
 
+    # local YARA rules directory (public rules only); empty disables the YARA engine
+    yara_rules_dir: str = ""
+    # recursive scan of archive members: max members per archive, max depth
+    max_embedded_files: int = 10
+    max_scan_depth: int = 2
+
 
 settings = Settings()

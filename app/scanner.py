@@ -7,7 +7,10 @@ import struct
 import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
+
+import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 
 from app.config import settings
 
@@ -103,6 +106,37 @@ class ClamscanScanner:
         if proc.returncode == 1 and match:
             return ScanResult("infected", match.group(1), self.engine, proc.stdout.strip())
         return ScanResult("clean", None, self.engine, proc.stdout.strip())
+
+
+class YaraScanner:
+    """Second engine: local YARA rules (yara-python). Fully offline, public rules only."""
+
+    engine = "YARA (local rules)"
+
+    def __init__(self, rules_dir: str) -> None:
+        self._rules = None
+        files = sorted(
+            p for p in Path(rules_dir).glob("**/*") if p.suffix in (".yar", ".yara") and p.is_file()
+        )
+        if files:
+            sources = {f"rule_{i}": f.read_text(encoding="utf-8") for i, f in enumerate(files)}
+            self._rules = yara.compile(sources=sources)
+
+    def available(self) -> bool:
+        return self._rules is not None
+
+    def scan(self, data: bytes) -> list[str]:
+        if self._rules is None:
+            return []
+        return sorted({m.rule for m in self._rules.match(data=data)})
+
+
+@lru_cache(maxsize=1)
+def get_yara_scanner() -> YaraScanner | None:
+    if not settings.yara_rules_dir:
+        return None
+    scanner = YaraScanner(settings.yara_rules_dir)
+    return scanner if scanner.available() else None
 
 
 @lru_cache(maxsize=1)

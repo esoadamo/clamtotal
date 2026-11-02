@@ -13,6 +13,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.32",
+    "yara-python>=4.5",
 ]
 
 [build-system]
@@ -28,6 +29,10 @@ dev = [
     "pytest>=8",
     "ruff>=0.8",
     "ty>=0.0.1a18",
+]
+signatures = [
+    # updates unofficial ClamAV signature DBs (incl. YARA rules) inside the container
+    "fangfrisch>=1.4",
 ]
 
 [tool.ruff]

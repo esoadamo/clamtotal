@@ -7,11 +7,24 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.analysis import compute_hashes, extract_urls, shannon_entropy, sniff_file_type
+from app.analysis import (
+    compute_hashes,
+    extract_embedded_files,
+    extract_iocs,
+    extract_urls,
+    find_suspicious_strings,
+    list_archive_members,
+    parse_elf,
+    parse_office,
+    parse_pdf,
+    parse_pe,
+    shannon_entropy,
+    sniff_file_type,
+)
 from app.config import settings
 from app.db import get_db
 from app.models import Scan
-from app.scanner import Scanner, ScannerUnavailableError, get_scanner
+from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
 
 app = FastAPI(title="ClamTotal", version="0.1.0")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -38,41 +51,88 @@ def _lookup(db: Session, hash_value: str) -> Scan | None:
 
 
 def _scan_and_store(
-    db: Session, scanner: Scanner, data: bytes, file_name: str, rescan: bool
+    db: Session,
+    scanner: Scanner,
+    data: bytes,
+    file_name: str,
+    rescan: bool,
+    depth: int = 0,
 ) -> tuple[Scan, bool]:
-    """Scan data with ClamAV and persist the result. Returns (scan, was_cached)."""
+    """Scan with all local engines, run offline analysis, persist. Returns (scan, was_cached)."""
     hashes = compute_hashes(data)
     existing = db.get(Scan, hashes["sha256"])
     if existing and not rescan:
         return existing, True
+
+    # multi-engine verdicts: ClamAV (clamd/clamscan) + local YARA rules
     result = scanner.scan(data)
-    file_type, magic_hex = sniff_file_type(data)
-    if existing:
-        existing.md5, existing.sha1 = hashes["md5"], hashes["sha1"]
-        existing.file_name, existing.size = file_name, len(data)
-        existing.file_type, existing.magic_hex = file_type, magic_hex
-        existing.verdict, existing.signature = result.verdict, result.signature
-        existing.engine, existing.urls, existing.raw_output = (
-            result.engine,
-            extract_urls(data),
-            result.raw,
+    engines = [{"name": result.engine, "verdict": result.verdict, "signature": result.signature}]
+    yara = get_yara_scanner()
+    if yara is not None:
+        matches = yara.scan(data)
+        engines.append(
+            {
+                "name": yara.engine,
+                "verdict": "infected" if matches else "clean",
+                "signature": ", ".join(matches) if matches else None,
+            }
         )
+    verdict = "infected" if any(e["verdict"] == "infected" for e in engines) else "clean"
+    signature = next((e["signature"] for e in engines if e["verdict"] == "infected"), None)
+
+    # offline static analysis, mimicking VirusTotal's Details/Behavior/Network tabs
+    file_type, magic_hex = sniff_file_type(data)
+    behavior: dict = {"suspicious_strings": find_suspicious_strings(data)}
+    if file_type.startswith("PE32"):
+        behavior["pe"] = parse_pe(data)
+    elif file_type.startswith("ELF"):
+        behavior["elf"] = parse_elf(data)
+    elif file_type.startswith("PDF"):
+        behavior["pdf"] = parse_pdf(data)
+    elif file_type.startswith("ZIP"):
+        office = parse_office(data)
+        if office:
+            behavior["office"] = office
+        behavior["archive_members"] = list_archive_members(data)
+
+    embedded: list[dict] = []
+    if depth < settings.max_scan_depth:
+        for member_name, member_data in extract_embedded_files(data, settings.max_embedded_files):
+            child, _ = _scan_and_store(db, scanner, member_data, member_name, rescan, depth + 1)
+            embedded.append(
+                {
+                    "name": member_name,
+                    "sha256": child.sha256,
+                    "size": child.size,
+                    "verdict": child.verdict,
+                }
+            )
+
+    fields = dict(
+        md5=hashes["md5"],
+        sha1=hashes["sha1"],
+        sha512=hashes["sha512"],
+        crc32=hashes["crc32"],
+        file_name=file_name,
+        size=len(data),
+        file_type=file_type,
+        magic_hex=magic_hex,
+        verdict=verdict,
+        signature=signature,
+        engine=result.engine,
+        urls=extract_urls(data),
+        raw_output=result.raw,
+        engines=engines,
+        iocs=extract_iocs(data),
+        behavior=behavior,
+        embedded=embedded,
+    )
+    if existing:
+        for key, value in fields.items():
+            setattr(existing, key, value)
         scan = existing
     else:
-        scan = Scan(
-            sha256=hashes["sha256"],
-            md5=hashes["md5"],
-            sha1=hashes["sha1"],
-            file_name=file_name,
-            size=len(data),
-            file_type=file_type,
-            magic_hex=magic_hex,
-            verdict=result.verdict,
-            signature=result.signature,
-            engine=result.engine,
-            urls=extract_urls(data),
-            raw_output=result.raw,
-        )
+        scan = Scan(sha256=hashes["sha256"], **fields)
         db.add(scan)
     db.commit()
     (Path(settings.upload_dir) / scan.sha256).write_bytes(data)
@@ -110,7 +170,22 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         )
     stored = Path(settings.upload_dir) / scan.sha256
     entropy = shannon_entropy(stored.read_bytes()) if stored.exists() else 0.0
-    return templates.TemplateResponse(request, "report.html", {"scan": scan, "entropy": entropy})
+    # "relationships": other scans in the local DB sharing any IOC (VT-like, fully local)
+    relations: list[tuple[Scan, list[str]]] = []
+    my_iocs = {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
+    if my_iocs:
+        for other in db.execute(select(Scan).where(Scan.sha256 != scan.sha256)).scalars():
+            shared = sorted(
+                {v for values in (other.iocs or {}).values() for v in values if isinstance(v, str)}
+                & my_iocs
+            )
+            if shared:
+                relations.append((other, shared[:5]))
+    return templates.TemplateResponse(
+        request,
+        "report.html",
+        {"scan": scan, "entropy": entropy, "relations": relations[:10]},
+    )
 
 
 @app.get("/file/{hash_value}/download")
@@ -191,13 +266,18 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
             "sha256": scan.sha256,
             "md5": scan.md5,
             "sha1": scan.sha1,
+            "sha512": scan.sha512,
+            "crc32": scan.crc32,
             "file_name": scan.file_name,
             "size": scan.size,
             "file_type": scan.file_type,
             "verdict": scan.verdict,
             "signature": scan.signature,
-            "engine": scan.engine,
+            "engines": scan.engines,
             "urls": scan.urls,
+            "iocs": scan.iocs,
+            "behavior": scan.behavior,
+            "embedded": scan.embedded,
             "scanned_at": scan.scanned_at.isoformat(),
         }
     )
