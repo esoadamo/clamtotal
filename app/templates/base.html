@@ -146,6 +146,20 @@
   .progress-track { height: 6px; background: #e8eaed; border-radius: 3px; overflow: hidden; margin-top: 14px; }
   .progress-bar { height: 100%; width: 0%; background: var(--vt-blue); border-radius: 3px; transition: width 0.15s ease; }
   .dz-status { margin-top: 14px; font-size: 14px; color: var(--vt-text); }
+
+  /* VT-style modal dialog */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    width: 480px; max-width: 92vw; padding: 24px;
+  }
+  .modal h3 { margin: 0 0 8px; font-size: 18px; font-weight: 500; }
+  .modal .modal-body { color: var(--vt-muted); font-size: 13.5px; word-break: break-all; }
+  .modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 </style>
 </head>
 <body>
@@ -167,5 +181,15 @@
   {% block content %}{% endblock %}
 </main>
 <div class="footer">ClamTotal — VirusTotal-style frontend for ClamAV · 100% offline</div>
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="modal-title">Upload file?</h3>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn outline" id="modal-cancel" type="button">Cancel</button>
+      <button class="btn" id="modal-confirm" type="button">Upload and scan</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

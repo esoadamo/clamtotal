@@ -58,8 +58,20 @@
   var status = document.getElementById('dz-status');
   var bar = document.getElementById('progress-bar');
   var errorBox = document.getElementById('dz-error');
+  var overlay = document.getElementById('modal-overlay');
+  var modalBody = document.getElementById('modal-body');
+  var pendingFile = null;
 
-  function uploadFile(file) {
+  function sha256Hex(buf) {
+    return crypto.subtle.digest('SHA-256', buf).then(function (digest) {
+      return Array.from(new Uint8Array(digest)).map(function (b) {
+        return b.toString(16).padStart(2, '0');
+      }).join('');
+    });
+  }
+
+  function startUpload(file, sha256) {
+    overlay.classList.remove('open');
     idle.style.display = 'none';
     errorBox.style.display = 'none';
     progress.style.display = 'block';
@@ -75,19 +87,15 @@
         status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
       }
     };
-    xhr.upload.onload = function () {
-      bar.style.width = '100%';
-      spinner.style.display = 'block';  // VT-style rotating circle while scanning
-      status.textContent = 'Scanning ' + file.name + '…';
-    };
+    xhr.upload.onload = function () { bar.style.width = '100%'; };
     xhr.onload = function () {
-      if (xhr.status === 303) {
-        window.location.href = xhr.getResponseHeader('Location');
+      if (xhr.status === 200 || xhr.status === 202) {
+        window.location.href = '/file/' + sha256;  // report page shows the scanning spinner
       } else {
         progress.style.display = 'none';
         idle.style.display = 'block';
         errorBox.style.display = 'block';
-        errorBox.textContent = 'Scan failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200);
+        errorBox.textContent = 'Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200);
       }
     };
     xhr.onerror = function () {
@@ -101,8 +109,36 @@
     xhr.send(fd);
   }
 
+  function onFileSelected(file) {
+    errorBox.style.display = 'none';
+    status.textContent = 'Hashing ' + file.name + '…';
+    file.arrayBuffer().then(sha256Hex).then(function (sha256) {
+      fetch('/api/v2/files/' + sha256).then(function (resp) {
+        if (resp.ok) {
+          window.location.href = '/file/' + sha256;  // already analyzed -> straight to report
+          return;
+        }
+        pendingFile = { file: file, sha256: sha256 };
+        modalBody.innerHTML =
+          'This file has <strong>not been analyzed yet</strong>.<br><br>' +
+          '<span class="muted">Name:</span> ' + file.name + '<br>' +
+          '<span class="muted">Size:</span> ' + file.size + ' bytes<br>' +
+          '<span class="muted">SHA-256:</span> <span class="mono">' + sha256 + '</span><br><br>' +
+          'Do you want to upload it for scanning?';
+        overlay.classList.add('open');
+      });
+    });
+  }
+
+  document.getElementById('modal-cancel').addEventListener('click', function () {
+    overlay.classList.remove('open');
+    input.value = '';
+  });
+  document.getElementById('modal-confirm').addEventListener('click', function () {
+    if (pendingFile) startUpload(pendingFile.file, pendingFile.sha256);
+  });
   input.addEventListener('change', function () {
-    if (input.files.length) uploadFile(input.files[0]);
+    if (input.files.length) onFileSelected(input.files[0]);
   });
   form.addEventListener('submit', function (e) { e.preventDefault(); });
   ['dragover', 'dragenter'].forEach(function (ev) {
@@ -112,7 +148,7 @@
     dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = ''; });
   });
   dz.addEventListener('drop', function (e) {
-    if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files.length) onFileSelected(e.dataTransfer.files[0]);
   });
 })();
 </script>
