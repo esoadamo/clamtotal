@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ scan.file_name }} — ClamTotal{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="file-head">
+    <div>
+      <h1>{{ scan.file_name }}</h1>
+      <div class="muted">{{ scan.size }} bytes · {{ scan.file_type }} · scanned {{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</div>
+    </div>
+    <div>
+      <a class="btn secondary" href="/file/{{ scan.sha256 }}/download">Download sample</a>
+      <form action="/file/{{ scan.sha256 }}/rescan" method="post" style="display:inline">
+        <button class="btn secondary" type="submit">Rescan</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="detection-widget det {{ scan.verdict }}">
+    <div class="circle" style="--p: {{ 100 if scan.verdict == 'infected' else 0 }}">
+      <div class="circle-inner">{{ "1/1" if scan.verdict == "infected" else "0/1" }}</div>
+    </div>
+    <div>
+      <strong>{{ "Malicious" if scan.verdict == "infected" else "No detections" }}</strong>
+      <div class="muted">{{ "1 security engine flagged this file" if scan.verdict == "infected" else "No security engine flagged this file" }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    <button class="tab active" data-tab="detection">Detection</button>
+    <button class="tab" data-tab="details">Details</button>
+    <button class="tab" data-tab="urls">Extracted URLs ({{ scan.urls | length }})</button>
+  </div>
+
+  <section id="tab-detection" class="tab-panel active">
+    <table>
+      <thead><tr><th>Engine</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>{{ scan.engine }}</td>
+          <td>{% if scan.verdict == "infected" %}<span class="sig">{{ scan.signature }}</span>{% else %}Undetected{% endif %}</td>
+        </tr>
+      </tbody>
+    </table>
+    {% if scan.raw_output %}
+    <h2 style="margin-top:18px">Raw scanner output</h2>
+    <pre class="hash" style="background:#f0f3f6;padding:12px;border-radius:6px;overflow:auto">{{ scan.raw_output }}</pre>
+    {% endif %}
+  </section>
+
+  <section id="tab-details" class="tab-panel">
+    <dl class="kv">
+      <dt>File name</dt><dd>{{ scan.file_name }}</dd>
+      <dt>File size</dt><dd>{{ scan.size }} bytes</dd>
+      <dt>File type</dt><dd>{{ scan.file_type }}</dd>
+      <dt>Magic (first bytes)</dt><dd class="hash">{{ scan.magic_hex }}</dd>
+      <dt>Entropy</dt><dd>{{ "%.3f" | format(entropy) }} bits/byte</dd>
+      <dt>SHA-256</dt><dd class="hash">{{ scan.sha256 }}</dd>
+      <dt>SHA-1</dt><dd class="hash">{{ scan.sha1 }}</dd>
+      <dt>MD5</dt><dd class="hash">{{ scan.md5 }}</dd>
+    </dl>
+  </section>
+
+  <section id="tab-urls" class="tab-panel">
+    {% if scan.urls %}
+    <ul class="urls">
+      {% for url in scan.urls %}<li><a href="{{ url }}">{{ url }}</a></li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No URLs found in this file.</p>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === btn); });
+    document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.toggle('active', p.id === 'tab-' + btn.dataset.tab); });
+  });
+});
+</script>
+{% endblock %}

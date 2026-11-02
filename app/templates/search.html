@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Search: {{ q }} — ClamTotal{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Search results for “{{ q }}”</h2>
+  {% if results %}
+  <table>
+    <thead><tr><th>File name</th><th>SHA-256</th><th>Detections</th><th>Scanned</th></tr></thead>
+    <tbody>
+      {% for scan in results %}
+      <tr>
+        <td><a href="/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
+        <td class="hash">{{ scan.sha256[:16] }}…</td>
+        <td><span class="badge {{ scan.verdict }}">{{ "1/1 infected" if scan.verdict == "infected" else "0/1 clean" }}</span></td>
+        <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No results found. Upload the file to scan it, or try another hash / file name.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not found — ClamTotal{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>File not found</h2>
+  <p class="muted">No scan report exists for <span class="hash">{{ hash_value }}</span>.</p>
+  <p>Upload the file from the <a href="/">home page</a> to scan it with ClamAV.</p>
+</div>
+{% endblock %}

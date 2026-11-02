@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}ClamTotal — file scanner{% endblock %}
+{% block content %}
+<div class="card hero">
+  <h1>Analyze suspicious files</h1>
+  <p>Upload a file to scan it with ClamAV, or search a hash from a previous scan.</p>
+  <form class="upload-form" action="/file/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button class="btn" type="submit">Upload and scan</button>
+  </form>
+</div>
+<div class="card">
+  <h2>Recently scanned files</h2>
+  {% if recent %}
+  <table>
+    <thead><tr><th>File name</th><th>SHA-256</th><th>Detections</th><th>Scanned</th></tr></thead>
+    <tbody>
+      {% for scan in recent %}
+      <tr>
+        <td><a href="/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
+        <td class="hash">{{ scan.sha256[:16] }}…</td>
+        <td><span class="badge {{ scan.verdict }}">{{ "1/1 infected" if scan.verdict == "infected" else "0/1 clean" }}</span></td>
+        <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No files scanned yet — upload one above.</p>
+  {% endif %}
+</div>
+{% endblock %}
