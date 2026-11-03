@@ -2,6 +2,7 @@
 that app/static/app.js wires up (ids, data attributes, script include)."""
 
 import hashlib
+from pathlib import Path
 
 from app.config import settings
 
@@ -133,6 +134,28 @@ def test_modal_has_spinner_and_progress_styles(client):
     assert ".spinner" in home  # hashing/upload spinners
     assert ".progress-bar" in home
     assert "ct-spin" in home
+
+
+def test_download_button_disabled_when_sample_expired(client):
+    content = b"expired sample content"
+    client.post("/file/upload", files={"file": ("expired.bin", content)})
+    sha = hashlib.sha256(content).hexdigest()
+    page = client.get(f"/ui/file/{sha}").text
+    assert f'href="/ui/file/{sha}/download"' in page  # enabled while the file is on disk
+
+    (Path(settings.upload_dir) / sha).unlink()  # simulate TTL expiry removing the file
+    resp = client.get(f"/ui/file/{sha}")
+    assert resp.status_code == 200  # report page still renders
+    page = resp.text
+    assert f'href="/ui/file/{sha}/download"' not in page
+    assert 'disabled title="The file is already expired and deleted"' in page
+    assert client.get(f"/ui/file/{sha}/download").status_code == 404
+    # the scan record is kept in the database, only the file was removed
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        assert db.get(Scan, sha) is not None
 
 
 def test_footer_links_to_github_repo(client):

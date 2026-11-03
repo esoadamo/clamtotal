@@ -282,7 +282,8 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             request, "not_found.html", {"hash_value": hash_value}, status_code=404
         )
     stored = Path(settings.upload_dir) / scan.sha256
-    entropy = shannon_entropy(stored.read_bytes()) if stored.exists() else 0.0
+    stored_exists = stored.exists()
+    entropy = shannon_entropy(stored.read_bytes()) if stored_exists else 0.0
     pending = scan.status != "done"
     # relations: shared IOCs + archive membership (this file embedded in another scan, or this
     # archive containing other scans) — all resolved locally by hash, VT-style
@@ -310,6 +311,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         {
             "scan": scan,
             "entropy": entropy,
+            "stored_exists": stored_exists,
             "relations": relations[:10],
             "pending": pending,
             "poll_interval": settings.scan_poll_interval_ms,

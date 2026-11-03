@@ -24,7 +24,11 @@
       <form action="/ui/file/{{ scan.sha256 }}/rescan" method="post">
         <button class="btn outline" type="submit">Reanalyze</button>
       </form>
+      {% if stored_exists %}
       <a class="btn" href="/ui/file/{{ scan.sha256 }}/download">Download</a>
+      {% else %}
+      <button class="btn" type="button" disabled title="The file is already expired and deleted">Download</button>
+      {% endif %}
     </div>
   </div>
 </div>
