@@ -135,6 +135,12 @@ def test_modal_has_spinner_and_progress_styles(client):
     assert "ct-spin" in home
 
 
+def test_footer_links_to_github_repo(client):
+    for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
+        page = client.get(path).text
+        assert 'href="https://github.com/esoadamo/clamtotal"' in page, path
+
+
 def test_mobile_viewport_and_media_query_on_all_pages(client):
     sha = hashlib.sha256(b"mobile view").hexdigest()
     client.post("/file/upload", files={"file": ("mobile.bin", b"mobile view")})
