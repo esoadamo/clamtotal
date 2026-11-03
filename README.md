@@ -80,7 +80,10 @@ podman run -e CLAM_AUTOUPDATE=false -v ./my-signatures:/var/lib/clamav:ro \
 ```
 
 Public YARA rules can be mounted at `/rules` (`YARA_RULES_DIR=/rules`); a small
-original ruleset is bundled in `app/rules/public.yar`.
+original ruleset is bundled in `app/rules/public.yar`. To customize the unofficial
+signature sources (fangfrisch), mount your own config over the baked-in one:
+`-v ./fangfrisch.conf:/etc/fangfrisch.conf:ro` (or set `FANGFRISCH_CONF` to another
+path) — see `container/fangfrisch.conf` for the available sections.
 
 ## Configuration (environment variables)
 
