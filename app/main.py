@@ -356,7 +356,10 @@ def privacy(request: Request) -> HTMLResponse:
             n, unit = ttl // 60, "hour"
         else:
             n, unit = ttl, "minute"
-        ttl_sentence = f"All uploaded files are deleted after {n} {unit}{'s' if n != 1 else ''}."
+        ttl_sentence = (
+            f"All uploaded files are deleted after {n} {unit}{'s' if n != 1 else ''}. "
+            "A background job prunes them every minute."
+        )
     return templates.TemplateResponse(request, "privacy.html", {"ttl_sentence": ttl_sentence})
 
 

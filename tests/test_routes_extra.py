@@ -241,11 +241,18 @@ def test_privacy_policy_ttl_sentence_reflects_setting(client, monkeypatch):
     from app.config import settings as s
 
     monkeypatch.setattr(s, "uploads_ttl", -1)
-    assert "All uploaded files are kept indefinitely." in client.get("/ui/privacy").text
+    page = client.get("/ui/privacy").text
+    assert "All uploaded files are kept indefinitely." in page
+    assert "prunes" not in page  # nothing is ever pruned when kept indefinitely
     monkeypatch.setattr(s, "uploads_ttl", 0)
-    assert "All uploaded files are deleted right after upload." in client.get("/ui/privacy").text
+    page = client.get("/ui/privacy").text
+    assert "All uploaded files are deleted right after upload." in page
+    assert "prunes" not in page
     monkeypatch.setattr(s, "uploads_ttl", 5)
-    assert "All uploaded files are deleted after 5 minutes." in client.get("/ui/privacy").text
+    assert (
+        "All uploaded files are deleted after 5 minutes. A background job prunes them every minute."
+        in client.get("/ui/privacy").text
+    )
     monkeypatch.setattr(s, "uploads_ttl", 1)
     assert "All uploaded files are deleted after 1 minute." in client.get("/ui/privacy").text
     monkeypatch.setattr(s, "uploads_ttl", 120)
