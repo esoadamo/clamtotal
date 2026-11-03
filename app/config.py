@@ -40,5 +40,9 @@ class Settings(BaseSettings):
     rate_limit_browse: int = 0
     rate_limit_window_seconds: int = 60
 
+    # optional Plausible analytics script URL loaded on every page; empty = off
+    # (e.g. "https://plausible.io/js/script.js"); default keeps runtime airgapped
+    plausible_script_url: str = ""
+
 
 settings = Settings()

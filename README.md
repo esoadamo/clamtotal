@@ -3,8 +3,9 @@
 > **Disclaimer:** this project was vibe coded with Mistral 4 to test its capabilities. The code was checked by a human at some point and found to contain no obvious vulnerabilities, but due to the nature of vibe coding it is advised to take a look for yourself before relying on it.
 
 A [VirusTotal](https://www.virustotal.com)-style web app that scans uploaded
-files with **ClamAV**. Fully airgapped: no external API calls, CDNs, or
-telemetry at runtime.
+files with **ClamAV**. Fully airgapped by default: no external API calls, CDNs,
+or telemetry at runtime (an optional Plausible analytics script can be enabled
+via `PLAUSIBLE_SCRIPT_URL`, off by default).
 
 Features (all fully offline, no login, no community features):
 
@@ -101,6 +102,7 @@ original ruleset is bundled in `app/rules/public.yar`.
 | `RATE_LIMIT_UPLOAD` | `0` | optional per-IP rate limit on uploads (`POST /file/upload`, `POST /api/v2/files`): max requests per window, `0` = disabled |
 | `RATE_LIMIT_BROWSE` | `0` | optional per-IP rate limit on browsing result pages (`/ui/`, `/ui/search`, `/ui/file/{hash}`): max requests per window, `0` = disabled |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | rate-limit window length in seconds (429 returned when exceeded) |
+| `PLAUSIBLE_SCRIPT_URL` | unset | optional Plausible analytics script URL loaded (deferred) on every page; unset = fully airgapped |
 
 ## Development
 

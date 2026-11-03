@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -54,6 +55,8 @@ def _defang(value: str) -> str:
 
 
 templates.env.filters["defang"] = _defang
+_plausible_url: Any = settings.plausible_script_url  # Any: jinja globals stub excludes str
+templates.env.globals["plausible_script_url"] = _plausible_url
 
 Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 

@@ -158,6 +158,19 @@ def test_download_button_disabled_when_sample_expired(client):
         assert db.get(Scan, sha) is not None
 
 
+def test_plausible_script_optional(client, monkeypatch):
+    from app.main import templates
+
+    page = client.get("/ui/").text
+    assert "plausible" not in page  # off by default: no external script loaded
+    monkeypatch.setitem(
+        templates.env.globals, "plausible_script_url", "https://plausible.example/js/script.js"
+    )
+    for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
+        page = client.get(path).text
+        assert '<script defer src="https://plausible.example/js/script.js"></script>' in page, path
+
+
 def test_footer_links_to_github_repo(client):
     for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
         page = client.get(path).text
