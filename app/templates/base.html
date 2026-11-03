@@ -181,6 +181,24 @@
   .modal h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
   .modal .modal-body { color: var(--muted); font-size: 13.5px; word-break: break-all; }
   .modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+  /* mobile */
+  @media (max-width: 640px) {
+    .appbar { flex-wrap: wrap; height: auto; gap: 10px; padding: 10px 16px; }
+    .logo { font-size: 18px; }
+    .appbar-search { flex: 1 1 100%; max-width: none; margin: 0; }
+    .container { margin: 16px auto; }
+    .card { padding: 16px; overflow-x: auto; }
+    .hero-title { font-size: 22px; }
+    .dropzone { padding: 36px 16px; }
+    dl.kv { grid-template-columns: 1fr; row-gap: 2px; }
+    dl.kv dt { margin-top: 8px; }
+    dl.kv dt:first-child { margin-top: 0; }
+    .det-widget { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
+    .tabs { gap: 16px; overflow-x: auto; }
+    .tab { white-space: nowrap; }
+    th, td { padding: 8px; overflow-wrap: anywhere; }
+  }
 </style>
 </head>
 <body>

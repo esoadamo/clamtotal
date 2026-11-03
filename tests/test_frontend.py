@@ -133,3 +133,13 @@ def test_modal_has_spinner_and_progress_styles(client):
     assert ".spinner" in home  # hashing/upload spinners
     assert ".progress-bar" in home
     assert "ct-spin" in home
+
+
+def test_mobile_viewport_and_media_query_on_all_pages(client):
+    sha = hashlib.sha256(b"mobile view").hexdigest()
+    client.post("/file/upload", files={"file": ("mobile.bin", b"mobile view")})
+    for path in ["/ui/", "/ui/search?q=x", f"/ui/file/{sha}", "/ui/privacy"]:
+        page = client.get(path).text
+        assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in page, path
+        assert "@media (max-width: 640px)" in page, path
+        assert ".appbar-search { flex: 1 1 100%" in page, path  # appbar search drops to its own row
