@@ -98,6 +98,9 @@ original ruleset is bundled in `app/rules/public.yar`.
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
 | `UPLOADS_TTL` | `-1` | how long uploaded samples are stored locally, in minutes: `-1` = forever, `0` = delete right after upload+scan, `N` = keep N minutes (pruned every minute) |
 | `SCAN_POLL_INTERVAL_MS` | `3000` | how often the pending report page polls for scan progress |
+| `RATE_LIMIT_UPLOAD` | `0` | optional per-IP rate limit on uploads (`POST /file/upload`, `POST /api/v2/files`): max requests per window, `0` = disabled |
+| `RATE_LIMIT_BROWSE` | `0` | optional per-IP rate limit on browsing result pages (`/ui/`, `/ui/search`, `/ui/file/{hash}`): max requests per window, `0` = disabled |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | rate-limit window length in seconds (429 returned when exceeded) |
 
 ## Development
 

@@ -9,6 +9,77 @@ def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_rate_limits_disabled_by_default(client):
+    for i in range(5):
+        r = client.post("/file/upload", files={"file": ("rl-off.bin", bytes([i]) * 16)})
+        assert r.status_code in (200, 202)
+        assert client.get("/ui/").status_code == 200
+        assert client.get("/ui/search?q=x").status_code == 200
+
+
+def test_upload_rate_limit_enforced_per_ip(client, monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(settings, "rate_limit_upload", 2)
+    monkeypatch.setattr(settings, "rate_limit_window_seconds", 3600)
+    m._rate_buckets.clear()
+    codes = [
+        client.post(
+            "/file/upload", files={"file": ("rl.bin", f"upload-rl-{i}".encode() * 4)}
+        ).status_code
+        for i in range(3)
+    ]
+    assert codes[:2] == [202, 202]
+    assert codes[2] == 429
+    # the api upload endpoint shares the same upload limit
+    assert client.post("/api/v2/files", files={"file": ("rl2.bin", b"x" * 16)}).status_code == 429
+    # browsing is unaffected by the upload limit
+    assert client.get("/ui/").status_code == 200
+    m._rate_buckets.clear()
+
+
+def test_browse_rate_limit_enforced(client, monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(settings, "rate_limit_browse", 2)
+    monkeypatch.setattr(settings, "rate_limit_window_seconds", 3600)
+    m._rate_buckets.clear()
+    assert client.get("/ui/").status_code == 200
+    assert client.get("/ui/search?q=x").status_code == 200
+    assert client.get("/ui/").status_code == 429
+    assert client.get(f"/ui/file/{'a' * 64}").status_code == 429
+    # uploads are unaffected by the browse limit
+    assert client.post("/file/upload", files={"file": ("rl3.bin", b"y" * 16)}).status_code in (
+        200,
+        202,
+    )
+    m._rate_buckets.clear()
+
+
+def test_rate_limit_window_reset_and_bucket_purge(client, monkeypatch):
+    import time
+
+    import app.main as m
+
+    monkeypatch.setattr(settings, "rate_limit_upload", 1)
+    monkeypatch.setattr(
+        settings, "rate_limit_window_seconds", 0
+    )  # every request starts a new window
+    m._rate_buckets.clear()
+    for i in range(3):  # window resets each time, so never limited
+        r = client.post("/file/upload", files={"file": ("w.bin", f"win-{i}".encode() * 4)})
+        assert r.status_code in (200, 202)
+    monkeypatch.setattr(settings, "rate_limit_window_seconds", 3600)
+    m._rate_buckets.clear()
+    assert client.post("/file/upload", files={"file": ("w2.bin", b"w2" * 8)}).status_code == 202
+    assert client.post("/file/upload", files={"file": ("w3.bin", b"w3" * 8)}).status_code == 429
+    # force the memory-bound purge path with >10000 stale buckets
+    m._rate_buckets.update({f"stale:{i}": (time.time() - 7200, 1) for i in range(10001)})
+    assert client.post("/file/upload", files={"file": ("w4.bin", b"w4" * 8)}).status_code == 429
+    assert all(not k.startswith("stale:") for k in m._rate_buckets)
+    m._rate_buckets.clear()
+
+
 def test_upload_empty_file_400(client):
     response = client.post("/file/upload", files={"file": ("empty.bin", b"")})
     assert response.status_code == 400

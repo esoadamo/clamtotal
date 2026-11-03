@@ -83,6 +83,34 @@ def _prune_uploads() -> None:
             f.unlink(missing_ok=True)
 
 
+_rate_buckets: dict[str, tuple[float, int]] = {}
+_rate_lock = threading.Lock()
+
+
+def _rate_limit(request: Request, limit: int, kind: str) -> None:
+    """Optional fixed-window per-IP rate limit; limit <= 0 disables it."""
+    if limit <= 0:
+        return
+    now = time.time()
+    ident = f"{kind}:{request.client.host if request.client else 'unknown'}"
+    with _rate_lock:
+        start, count = _rate_buckets.get(ident, (now, 0))
+        if now - start >= settings.rate_limit_window_seconds:
+            start, count = now, 0
+        count += 1
+        _rate_buckets[ident] = (start, count)
+        if len(_rate_buckets) > 10000:  # bound memory: drop stale windows
+            stale = [
+                k
+                for k, (s, _) in _rate_buckets.items()
+                if now - s >= settings.rate_limit_window_seconds
+            ]
+            for k in stale:
+                del _rate_buckets[k]
+        if count > limit:
+            raise HTTPException(status_code=429, detail="rate limit exceeded, try again later")
+
+
 @app.exception_handler(ScannerUnavailableError)
 async def scanner_unavailable_handler(
     request: Request, exc: ScannerUnavailableError
@@ -197,6 +225,7 @@ def root() -> RedirectResponse:
 
 @app.get("/ui/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    _rate_limit(request, settings.rate_limit_browse, "browse")
     recent = (
         db.execute(select(Scan).order_by(Scan.scanned_at.desc()).limit(20)).scalars().all()
         if settings.show_recent_scans
@@ -256,12 +285,14 @@ def _enqueue_scan(
 
 @app.post("/file/upload")
 async def upload(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     rescan: bool = False,
     db: Session = Depends(get_db),
     scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
 ) -> JSONResponse:
+    _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
@@ -276,6 +307,7 @@ async def upload(
 
 @app.get("/ui/file/{hash_value}", response_class=HTMLResponse)
 def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    _rate_limit(request, settings.rate_limit_browse, "browse")
     scan = _lookup(db, hash_value)
     if scan is None:
         return templates.TemplateResponse(
@@ -367,6 +399,7 @@ def privacy(request: Request) -> HTMLResponse:
 
 @app.get("/ui/search", response_class=HTMLResponse)
 def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Response:
+    _rate_limit(request, settings.rate_limit_browse, "browse")
     q = q.strip()
     if _HASH_RE.match(q):
         scan = _lookup(db, q)
@@ -402,11 +435,13 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
 
 @app.post("/api/v2/files")
 async def api_scan(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
 ) -> JSONResponse:
+    _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})

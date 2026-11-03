@@ -33,5 +33,12 @@ class Settings(BaseSettings):
     # how often the report page polls for scan progress while pending
     scan_poll_interval_ms: int = 3000
 
+    # optional per-IP rate limits, max requests per window (0 = disabled):
+    # uploads -> POST /file/upload and POST /api/v2/files
+    # browse  -> GET /ui/, /ui/search, /ui/file/{hash}
+    rate_limit_upload: int = 0
+    rate_limit_browse: int = 0
+    rate_limit_window_seconds: int = 60
+
 
 settings = Settings()
