@@ -346,12 +346,18 @@ def rescan(
 def privacy(request: Request) -> HTMLResponse:
     ttl = settings.uploads_ttl
     if ttl < 0:
-        ttl_phrase = "forever by default (-1)"
+        ttl_sentence = "All uploaded files are kept indefinitely."
     elif ttl == 0:
-        ttl_phrase = "deleted right after scanning (0)"
+        ttl_sentence = "All uploaded files are deleted right after upload."
     else:
-        ttl_phrase = f"kept for {ttl} minute{'s' if ttl != 1 else ''}"
-    return templates.TemplateResponse(request, "privacy.html", {"ttl_phrase": ttl_phrase})
+        if ttl >= 1440 and ttl % 1440 == 0:
+            n, unit = ttl // 1440, "day"
+        elif ttl >= 60 and ttl % 60 == 0:
+            n, unit = ttl // 60, "hour"
+        else:
+            n, unit = ttl, "minute"
+        ttl_sentence = f"All uploaded files are deleted after {n} {unit}{'s' if n != 1 else ''}."
+    return templates.TemplateResponse(request, "privacy.html", {"ttl_sentence": ttl_sentence})
 
 
 @app.get("/ui/search", response_class=HTMLResponse)

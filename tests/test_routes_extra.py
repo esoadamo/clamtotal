@@ -225,27 +225,30 @@ def test_privacy_policy_page(client):
     page = client.get("/ui/privacy")
     assert page.status_code == 200
     assert "Privacy policy" in page.text
-    assert "UPLOADS_TTL" in page.text
     # linked from every page footer
     assert 'href="/ui/privacy"' in client.get("/ui/").text
 
 
 def test_privacy_policy_is_user_focused(client):
     page = client.get("/ui/privacy").text
-    assert "nothing leaves your machine or the server" in page
-    assert "your server" not in page.lower().replace("or the server", "")
+    assert "sent to the ClamTotal server" in page
+    assert "nothing leaves your machine" not in page
     assert "What we collect" in page
     assert "stored in the local SQLite database on the server" in page
 
 
-def test_privacy_policy_ttl_phrase_reflects_setting(client, monkeypatch):
+def test_privacy_policy_ttl_sentence_reflects_setting(client, monkeypatch):
     from app.config import settings as s
 
     monkeypatch.setattr(s, "uploads_ttl", -1)
-    assert "forever by default (-1)" in client.get("/ui/privacy").text
+    assert "All uploaded files are kept indefinitely." in client.get("/ui/privacy").text
     monkeypatch.setattr(s, "uploads_ttl", 0)
-    assert "deleted right after scanning (0)" in client.get("/ui/privacy").text
+    assert "All uploaded files are deleted right after upload." in client.get("/ui/privacy").text
     monkeypatch.setattr(s, "uploads_ttl", 5)
-    assert "kept for 5 minutes" in client.get("/ui/privacy").text
+    assert "All uploaded files are deleted after 5 minutes." in client.get("/ui/privacy").text
     monkeypatch.setattr(s, "uploads_ttl", 1)
-    assert "kept for 1 minute" in client.get("/ui/privacy").text
+    assert "All uploaded files are deleted after 1 minute." in client.get("/ui/privacy").text
+    monkeypatch.setattr(s, "uploads_ttl", 120)
+    assert "All uploaded files are deleted after 2 hours." in client.get("/ui/privacy").text
+    monkeypatch.setattr(s, "uploads_ttl", 7200)
+    assert "All uploaded files are deleted after 5 days." in client.get("/ui/privacy").text

@@ -1,6 +1,6 @@
 # clamtotal
 
-> **Disclaimer:** this project was fully vibe coded with [Mistral Vibe](https://mistral.ai/vibe). Review the code before relying on it.
+> **Disclaimer:** this project was vibe coded with Mistral 4 to test its capabilities. The code was checked by a human at some point and found to contain no obvious vulnerabilities, but due to the nature of vibe coding it is advised to take a look for yourself before relying on it.
 
 A [VirusTotal](https://www.virustotal.com)-style web app that scans uploaded
 files with **ClamAV**. Fully airgapped: no external API calls, CDNs, or

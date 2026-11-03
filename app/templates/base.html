@@ -77,7 +77,6 @@
     background: var(--brand); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .appbar-search button:hover { background: var(--brand-dark); }
-  .appbar-right { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 13px; font-weight: 500; }
 
   .container { max-width: 1032px; margin: 28px auto; padding: 0 16px; }
   .card {
@@ -197,7 +196,6 @@
     <input type="text" name="q" placeholder="Search by hash, file name, URL, domain or IP" value="{{ q | default('', true) }}">
     <button type="submit">Search</button>
   </form>
-  <div class="appbar-right"><span>ClamAV</span></div>
 </header>
 <main class="container">
   {% block content %}{% endblock %}

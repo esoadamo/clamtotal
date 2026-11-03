@@ -3,11 +3,11 @@
 {% block content %}
 <div class="card">
   <h2 style="font-size:20px; text-transform:none; letter-spacing:0; color:var(--text)">Privacy policy</h2>
-  <p>ClamTotal is a self-hosted file-analysis service. It is designed so that nothing leaves your machine or the server.</p>
+  <p>ClamTotal is a self-hosted file-analysis service. When you upload a file, it is sent to the ClamTotal server you are using, where it is scanned and handled as described below. Nothing is sent anywhere else: no external APIs, no third-party services, no telemetry.</p>
 
   <h3 class="section-title" style="margin-top:20px">What we collect</h3>
   <ul>
-    <li><strong>Files you upload</strong> — stored locally (by SHA-256) only as long as <code>UPLOADS_TTL</code> says: {{ ttl_phrase }}. A background job prunes them every minute.</li>
+    <li><strong>Files you upload</strong> — stored on the server (by SHA-256). {{ ttl_sentence }} A background job prunes them every minute.</li>
     <li><strong>Scan metadata</strong> — file name(s), hashes, verdicts, extracted indicators (URLs, domains, IPs, emails, registry keys) and static-analysis results, stored in the local SQLite database on the server.</li>
   </ul>
 </div>
