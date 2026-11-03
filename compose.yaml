@@ -1,7 +1,7 @@
 services:
   clamtotal:
     build: .
-    image: localhost/clamtotal:latest
+    image: ghcr.io/esoadamo/clamtotal:latest
     container_name: clamtotal
     ports:
       - "127.0.0.1:8000:8000"
