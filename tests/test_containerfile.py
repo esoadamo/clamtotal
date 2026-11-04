@@ -101,6 +101,15 @@ def test_github_actions_pinned_by_sha():
                 )
 
 
+def test_zizmor_workflow_runs_on_ci_changes_and_dispatch():
+    wf = ROOT / ".github" / "workflows" / "zizmor.yml"
+    t = wf.read_text()
+    assert "workflow_dispatch:" in t
+    assert 'paths: [".github/workflows/**"]' in t
+    assert "zizmorcore/zizmor@" in t
+    assert "persist-credentials: false" in t
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:

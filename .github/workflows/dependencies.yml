@@ -1,5 +1,12 @@
 name: update-dependencies
 
+permissions:
+  contents: read  # job below escalates to write only to open the PR
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   schedule:
     # every Monday at 06:00 UTC
@@ -8,12 +15,15 @@ on:
 
 jobs:
   update:
+    name: update locked dependencies and open PR
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write        # commit the updated uv.lock on the PR branch
+      pull-requests: write   # open the PR and enable auto-merge
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5

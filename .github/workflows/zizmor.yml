@@ -1,0 +1,29 @@
+name: zizmor
+
+# security audit of the GitHub Actions workflows themselves — runs whenever
+# CI config changes, on any PR touching workflows, and on manual dispatch
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/**"]
+  pull_request:
+    paths: [".github/workflows/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read  # zizmor only reads the workflow files
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    name: zizmor — workflow security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # fails the job on any zizmor finding
+      - uses: zizmorcore/zizmor@21bd300700d43d9ba04b0c1fce72a89391ac80b4 # v1.32.0
