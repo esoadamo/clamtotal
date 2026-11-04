@@ -34,6 +34,19 @@ def test_scripts_resolve_fangfrisch_from_venv():
     assert "/app/.venv/bin/fangfrisch" in s
 
 
+def test_fangfrisch_db_not_inside_clamav_dbdir():
+    # clamd loads every file in /var/lib/clamav as a signature DB; a sqlite fangfrisch.db
+    # there makes clamd fail with "Malformed database" and the container never starts
+    conf = (ROOT / "container" / "fangfrisch.conf").read_text()
+    m = re.search(r"db_url\s*=\s*(\S+)", conf)
+    assert m
+    assert "/var/lib/clamav" not in m.group(1)
+    cf = (ROOT / "Containerfile").read_text()
+    assert "mkdir -p /var/lib/fangfrisch" in cf  # dir must exist before fangfrisch initdb
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert "rm -f /var/lib/clamav/fangfrisch.db" in ep  # self-heal broken containers
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:

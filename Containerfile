@@ -41,6 +41,7 @@ COPY scripts/update-signatures.sh scripts/update-unofficial-sigs.sh /usr/local/b
 # fetched on first container launch, see container-entrypoint.sh). AIRGAPPED=true bakes
 # signatures into the image at build time instead.
 RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficial-sigs.sh \
+    && mkdir -p /var/lib/fangfrisch \
     && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
     && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
          else echo "default build: signatures are downloaded on first container launch"; fi

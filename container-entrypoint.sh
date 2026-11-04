@@ -3,6 +3,10 @@ set -e
 
 mkdir -p /data/uploads /rules
 
+# Self-heal: older images left fangfrisch's sqlite metadata DB inside clamd's DB dir,
+# which makes clamd abort with "Malformed database" — remove it if present.
+rm -f /var/lib/clamav/fangfrisch.db
+
 # First-launch signature bootstrap (default mode): download official + unofficial
 # signatures once, on the first container start — not at image build time.
 # Skipped entirely when CLAM_AUTOUPDATE=false (e.g. AIRGAPPED=true images that
