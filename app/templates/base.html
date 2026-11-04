@@ -231,6 +231,6 @@
     </div>
   </div>
 </div>
-<script src="/static/app.js"></script>
+{% set v = app_version or 'dev' %}<script src="/static/app.js?v={{ v }}"></script>
 </body>
 </html>

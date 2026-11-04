@@ -18,7 +18,8 @@ def test_every_page_loads_app_js(client):
     for path in ["/ui/", "/ui/search?q=x", f"/ui/file/{'a' * 64}"]:
         page = client.get(path)
         assert page.status_code in (200, 404)
-        assert '<script src="/static/app.js"></script>' in page.text, path
+        # script URL is versioned with the build stamp to bust browser/CDN caches
+        assert '<script src="/static/app.js?v=' in page.text, path
 
 
 def test_home_upload_contract(client):
@@ -170,6 +171,12 @@ def test_plausible_script_optional(client, monkeypatch):
     for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
         page = client.get(path).text
         assert '<script defer src="https://plausible.example/js/script.js"></script>' in page, path
+
+
+def test_static_files_served_with_no_cache_header(client):
+    r = client.get("/static/app.js")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
 
 
 def test_footer_shows_app_version_when_set(client, monkeypatch):
