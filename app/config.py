@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     # StreamMaxLength should match this value (the container entrypoint syncs it)
     stream_scan_max_size: int = 100 * 1024 * 1024  # bytes
     # files larger than this are uploaded by the browser in chunks (POST /file/upload/chunk);
-    # 0 disables chunked upload. Helps behind proxies with body size limits (e.g. Cloudflare)
-    chunk_upload_size: int = 50 * 1024 * 1024  # bytes
+    # 0 disables chunked upload. Default 25M stays well under Cloudflare's 100M request-body
+    # cap (free plan) even with multipart overhead and proxy buffers
+    chunk_upload_size: int = 25 * 1024 * 1024  # bytes
 
     # shown in the page footer; the container sets it at BUILD time (UTC YYMMDD.hhmmss)
     app_version: str = ""

@@ -175,3 +175,9 @@ test('chunkPlan splits large files into ordered ranges', () => {
   const last = CT.chunkPlan(120, 50).pop();
   assert.deepEqual(last, { index: 2, start: 100, end: 120 });  // remainder chunk
 });
+
+test('shouldUseChunks gates the chunked path', () => {
+  assert.equal(CT.shouldUseChunks(300 * 1024 * 1024, 25 * 1024 * 1024), true);
+  assert.equal(CT.shouldUseChunks(10 * 1024 * 1024, 25 * 1024 * 1024), false);
+  assert.equal(CT.shouldUseChunks(300 * 1024 * 1024, 0), false);  // disabled
+});

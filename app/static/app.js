@@ -160,6 +160,13 @@
     return plan;
   }
 
+  var FALLBACK_CHUNK_SIZE = 25 * 1024 * 1024; // used when the page lacks data-chunk-size
+
+  /* Decide whether to upload in chunks; chunkSize<=0 means disabled. */
+  function shouldUseChunks(fileSize, chunkSize) {
+    return chunkSize > 0 && fileSize > chunkSize;
+  }
+
   function defang(value) {
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
@@ -243,6 +250,7 @@
     function startChunkedUpload(file, sha256) {
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       var plan = chunkPlan(file.size, chunkSize);
+      if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
       var total = plan.length;
       var done = 0;
       function report() {
@@ -287,7 +295,7 @@
       if (status) status.textContent = 'Uploading ' + file.name + '…';
       if (bar) bar.style.width = '0%';
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
-      if (chunkSize > 0 && file.size > chunkSize) return startChunkedUpload(file, sha256);
+      if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256);
       var xhr = new global.XMLHttpRequest();
       xhr.open('POST', form.action);
       xhr.upload.onprogress = function (e) {
@@ -301,9 +309,16 @@
       xhr.onload = function () {
         if (xhr.status === 200 || xhr.status === 202) {
           global.location.href = '/ui/file/' + sha256;
-        } else {
-          showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
+          return;
         }
+        // Proxy rejected the single-request body (e.g. Cloudflare 413 for >100MB) —
+        // automatically retry as a chunked upload with a safe fallback chunk size.
+        if (xhr.status === 413 && file.size > (chunkSize || FALLBACK_CHUNK_SIZE)) {
+          form.dataset.chunkSize = String(chunkSize || FALLBACK_CHUNK_SIZE);
+          startChunkedUpload(file, sha256);
+          return;
+        }
+        showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
       };
       xhr.onerror = function () { showError('Network error while uploading.'); };
       var fd = new FormData();
@@ -364,6 +379,8 @@
     sha256HexPure: sha256HexPure,
     hashFileWithProgress: hashFileWithProgress,
     chunkPlan: chunkPlan,
+    shouldUseChunks: shouldUseChunks,
+    FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
     defang: defang,
     openModal: openModal,
     closeModal: closeModal,
