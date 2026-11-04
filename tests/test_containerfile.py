@@ -24,9 +24,13 @@ def test_containerfile_signature_semantics():
 
 def test_entrypoint_first_launch_bootstrap():
     ep = (ROOT / "container-entrypoint.sh").read_text()
-    assert "/data/.signatures-initialized" in ep  # marker: download once on first launch
     assert "update-signatures.sh" in ep
     assert "CLAM_AUTOUPDATE" in ep  # opt-out for airgapped images
+    # bootstrap is gated on ACTUAL db files in /var/lib/clamav, not a marker file:
+    # a marker that survives a failed download made every later start skip the
+    # bootstrap and clamd died with 'No supported database files found'
+    assert ".signatures-initialized" not in ep
+    assert "sig_db_files" in ep and "! sig_db_files" in ep
 
 
 def test_scripts_resolve_fangfrisch_from_venv():

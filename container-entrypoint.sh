@@ -7,15 +7,21 @@ mkdir -p /data/uploads /rules
 # which makes clamd abort with "Malformed database" — remove it if present.
 rm -f /var/lib/clamav/fangfrisch.db
 
-# First-launch signature bootstrap (default mode): download official + unofficial
-# signatures once, on the first container start — not at image build time.
-# Must run BEFORE clamd starts: clamd refuses to start when /var/lib/clamav has no
-# supported database files. Skipped entirely when CLAM_AUTOUPDATE=false (e.g.
-# AIRGAPPED=true images that already have signatures baked in).
-if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && [ ! -f /data/.signatures-initialized ]; then
-  echo "[bootstrap] downloading ClamAV signatures on first launch..."
+# Signature bootstrap (default mode): download official + unofficial signatures when
+# /var/lib/clamav has none — not at image build time. Must run BEFORE clamd starts:
+# clamd refuses to start when /var/lib/clamav has no supported database files, and the
+# old marker-file check skipped the download forever after one failed attempt.
+# Gated on actual DB files, so it retries on every start until signatures exist.
+# Skipped entirely when CLAM_AUTOUPDATE=false (e.g. AIRGAPPED=true images that already
+# have signatures baked in).
+sig_db_files() {
+  find /var/lib/clamav -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' -o -name '*.ndb' \
+    -o -name '*.hdb' -o -name '*.ldb' -o -name '*.yar' -o -name '*.db' -o -name '*.mdb' \
+    -o -name '*.cdb' \) -print -quit | grep -q .
+}
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && ! sig_db_files; then
+  echo "[bootstrap] no signature databases in /var/lib/clamav — downloading (official + unofficial)..."
   update-signatures.sh || echo "[bootstrap] signature download failed; will retry on next start"
-  touch /data/.signatures-initialized
 fi
 
 # Periodic background autoupdater (freshclam + unofficial DBs).
