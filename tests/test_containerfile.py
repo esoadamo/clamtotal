@@ -101,12 +101,13 @@ def test_github_actions_pinned_by_sha():
                 )
 
 
-def test_zizmor_runs_inside_tests_workflow():
-    # zizmor runs as a step of the Unit Tests job (no separate workflow/job);
+def test_zizmor_is_own_job_in_tests_workflow():
+    # zizmor is its own job inside tests.yml (no separate workflow file);
     # the upstream zizmor GitHub Action is broken at v1.32.0 (empty ZIZMOR_VERSION
     # build arg), so we run the PyPI binary via uvx instead
     assert not (ROOT / ".github" / "workflows" / "zizmor.yml").exists()
     t = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+    assert "  zizmor:\n" in t
     assert "uvx zizmor==1.32.0 --offline .github/workflows/" in t
 
 
