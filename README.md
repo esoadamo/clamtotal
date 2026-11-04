@@ -38,7 +38,10 @@ Features (all fully offline, no login, no community features):
 - VT-style UX flow: the browser hashes the file (SHA-256) and checks
   `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
   report; new files ask for confirmation, then upload with a progress bar and
-  land on `/file/{hash}`, which shows a rotating spinner until the scan finishes
+  land on `/file/{hash}`, which shows a rotating spinner until the scan finishes.
+  Files larger than `CHUNK_UPLOAD_SIZE` (default 50 MB) are uploaded in chunks
+  via `POST /file/upload/chunk` (reassembled server-side and verified by SHA-256),
+  so uploads work behind proxies with request-body limits (e.g. Cloudflare)
 
 ## Local development
 
@@ -107,6 +110,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
 | `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
 | `STREAM_SCAN_MAX_SIZE` | `104857600` | files larger than this (but ≤ `MAX_UPLOAD_SIZE`) are scanned via clamd's file-based SCAN from a temp file instead of INSTREAM; the container syncs clamd's `StreamMaxLength` to this value |
+| `CHUNK_UPLOAD_SIZE` | `52428800` | files larger than this are uploaded by the browser in chunks (`POST /file/upload/chunk`); `0` disables chunked upload |
 | `APP_VERSION` | build stamp | version shown in the page footer; the container image sets it at build time to `YYMMDD.hhmmss` UTC (`/app/.build-version`) |
 | `CLAM_MODE` | `auto` | `auto`, `daemon` (aliases `clamd`/`tcp`), or `cli` (clamscan); any other value fails startup |
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |

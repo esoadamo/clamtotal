@@ -163,3 +163,15 @@ test('onFileSelected shows hashing modal first (DOM contract)', () => {
   assert.match(els['modal-body'].innerHTML, /spinner/);
   delete globalThis.document;
 });
+
+test('chunkPlan splits large files into ordered ranges', () => {
+  assert.deepEqual(CT.chunkPlan(100, 0), []);          // disabled
+  assert.deepEqual(CT.chunkPlan(100, 100), []);        // fits in one request
+  assert.deepEqual(CT.chunkPlan(100, 50), [
+    { index: 0, start: 0, end: 50 },
+    { index: 1, start: 50, end: 100 },
+  ]);
+  assert.deepEqual(CT.chunkPlan(250 * 1024 * 1024, 50 * 1024 * 1024).length, 5);
+  const last = CT.chunkPlan(120, 50).pop();
+  assert.deepEqual(last, { index: 2, start: 100, end: 120 });  // remainder chunk
+});

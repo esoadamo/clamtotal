@@ -1,4 +1,5 @@
 import re
+import shutil
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -6,7 +7,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -34,6 +44,7 @@ from app.models import Scan
 from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
 from app.schemas import (
     ApiScanResponse,
+    ChunkUploadResponse,
     ErrorResponse,
     FileReport,
     HealthResponse,
@@ -293,7 +304,11 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
         if settings.show_recent_scans
         else []
     )
-    return templates.TemplateResponse(request, "index.html", {"recent": recent})
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"recent": recent, "chunk_size": settings.chunk_upload_size},
+    )
 
 
 @app.get("/", include_in_schema=False, response_class=HTMLResponse)
@@ -381,6 +396,69 @@ async def upload(
     if len(data) > settings.max_upload_size:
         raise HTTPException(status_code=413, detail="file too large")
     scan, cached = _enqueue_scan(background_tasks, db, data, file.filename or "upload.bin", rescan)
+    return JSONResponse(
+        status_code=200 if cached else 202,
+        content={"sha256": scan.sha256, "status": scan.status, "cached": cached},
+    )
+
+
+_CHUNK_NAME_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@app.post(
+    "/file/upload/chunk",
+    response_model=UploadResponse,
+    responses={
+        202: {"model": ChunkUploadResponse, "description": "chunk stored, more expected"},
+        400: {"model": ErrorResponse},
+        413: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def upload_chunk(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    sha256: str = Form(...),
+    index: int = Form(...),
+    total: int = Form(...),
+    name: str = Form(""),
+    db: Session = Depends(get_db),
+    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+) -> JSONResponse:
+    """Chunked upload for large files (behind proxies with request-body size limits).
+    Chunks are stored under UPLOAD_DIR/.chunks/<sha256>/; when the last one arrives the
+    file is reassembled, its SHA-256 verified, and the normal scan is enqueued."""
+    _rate_limit(request, settings.rate_limit_upload, "upload")
+    if settings.chunk_upload_size <= 0:
+        raise HTTPException(status_code=404, detail="chunked upload disabled")
+    if not _CHUNK_NAME_RE.match(sha256) or total < 1 or not 0 <= index < total:
+        raise HTTPException(status_code=400, detail="invalid sha256/index/total")
+    data = await file.read()
+    if not data or len(data) > settings.max_upload_size:
+        raise HTTPException(status_code=400, detail="empty or oversized chunk")
+    chunks_dir = Path(settings.upload_dir) / ".chunks" / sha256
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    (chunks_dir / f"{index:06d}").write_bytes(data)
+    received = len(list(chunks_dir.iterdir()))
+    if received < total:
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "chunk_stored",
+                "sha256": sha256,
+                "received": received,
+                "total": total,
+            },
+        )
+    assembled = b"".join((chunks_dir / f"{i:06d}").read_bytes() for i in range(total))
+    shutil.rmtree(chunks_dir, ignore_errors=True)
+    if len(assembled) > settings.max_upload_size or compute_hashes(assembled)["sha256"] != sha256:
+        raise HTTPException(status_code=400, detail="assembled file failed hash/size verification")
+    scan, cached = _enqueue_scan(
+        background_tasks, db, assembled, name or file.filename or "upload.bin", False
+    )
     return JSONResponse(
         status_code=200 if cached else 202,
         content={"sha256": scan.sha256, "status": scan.status, "cached": cached},

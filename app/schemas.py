@@ -56,5 +56,14 @@ class HealthResponse(BaseModel):
     status: str = Field(description="'ok' when the service is up")
 
 
+class ChunkUploadResponse(BaseModel):
+    """POST /file/upload/chunk — 202 while more chunks are expected."""
+
+    status: str = Field(description="'chunk_stored' until the last chunk arrives")
+    sha256: str = Field(description="SHA-256 of the whole file, as sent by the client")
+    received: int = Field(description="chunks stored so far (including this one)")
+    total: int = Field(description="total chunk count")
+
+
 class ErrorResponse(BaseModel):
     detail: str

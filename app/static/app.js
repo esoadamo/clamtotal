@@ -16,41 +16,80 @@
 
   function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
 
-  /* Pure-JS SHA-256, used as fallback when crypto.subtle is unavailable
-     (e.g. plain HTTP on a LAN IP — not a secure context). */
-  function sha256HexPure(bytes) {
-    var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
-    var bitLen = bytes.length * 8;
-    var padded = Array.from(bytes);
-    padded.push(0x80);
-    while (padded.length % 64 !== 56) padded.push(0);
-    for (var i = 7; i >= 0; i--) padded.push((bitLen / Math.pow(2, i * 8)) & 0xff);
-    var w = new Array(64);
-    for (var block = 0; block < padded.length; block += 64) {
-      for (var t = 0; t < 16; t++) {
-        w[t] = (padded[block + t * 4] << 24) | (padded[block + t * 4 + 1] << 16) |
-               (padded[block + t * 4 + 2] << 8) | padded[block + t * 4 + 3];
-      }
-      for (t = 16; t < 64; t++) {
-        var s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
-        var s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
-        w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
-      }
-      var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
-      for (t = 0; t < 64; t++) {
-        var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-        var ch = (e & f) ^ (~e & g);
-        var t1 = (hh + S1 + ch + K[t] + w[t]) | 0;
-        var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-        var maj = (a & b) ^ (a & c) ^ (b & c);
-        var t2 = (S0 + maj) | 0;
-        hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
-      }
-      h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
-      h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
-    }
-    return h.map(function (x) { return ('00000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
+  /* Incremental pure-JS SHA-256, used as fallback when crypto.subtle is unavailable
+     (e.g. plain HTTP on a LAN IP — not a secure context). Hashing a large file in one
+     blocking call freezes the UI, so update() is fed chunk by chunk with progress. */
+  function Sha256Pure() {
+    this.h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    this.buf = new Uint8Array(64);
+    this.bufLen = 0;
+    this.total = 0; // total bytes seen
   }
+  Sha256Pure.prototype._block = function (w0) {
+    var h = this.h;
+    var w = new Array(64);
+    for (var t = 0; t < 16; t++) w[t] = w0[t];
+    for (t = 16; t < 64; t++) {
+      var s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      var s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (t = 0; t < 64; t++) {
+      var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      var ch = (e & f) ^ (~e & g);
+      var t1 = (hh + S1 + ch + K[t] + w[t]) | 0;
+      var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      var maj = (a & b) ^ (a & c) ^ (b & c);
+      var t2 = (S0 + maj) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+    h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
+  };
+  Sha256Pure.prototype.update = function (bytes) {
+    this.total += bytes.length;
+    var off = 0;
+    if (this.bufLen > 0) {
+      var need = 64 - this.bufLen;
+      var take = Math.min(need, bytes.length);
+      this.buf.set(bytes.subarray(0, take), this.bufLen);
+      this.bufLen += take;
+      off = take;
+      if (this.bufLen === 64) {
+        var w0 = [];
+        for (var i = 0; i < 16; i++) w0.push((this.buf[i * 4] << 24) | (this.buf[i * 4 + 1] << 16) | (this.buf[i * 4 + 2] << 8) | this.buf[i * 4 + 3]);
+        this._block(w0);
+        this.bufLen = 0;
+      }
+    }
+    while (off + 64 <= bytes.length) {
+      var w = [];
+      for (var j = 0; j < 16; j++) {
+        var p = off + j * 4;
+        w.push((bytes[p] << 24) | (bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]);
+      }
+      this._block(w);
+      off += 64;
+    }
+    if (off < bytes.length) {
+      this.buf.set(bytes.subarray(off), 0);
+      this.bufLen = bytes.length - off;
+    }
+    return this;
+  };
+  Sha256Pure.prototype.hexDigest = function () {
+    var bitLen = this.total * 8;
+    var pad = new Uint8Array(64);
+    pad[0] = 0x80;
+    var padLen = (this.bufLen < 56) ? (56 - this.bufLen) : (120 - this.bufLen);
+    var lenBytes = new Uint8Array(8);
+    for (var i = 7; i >= 0; i--) lenBytes[i] = (bitLen / Math.pow(2, (7 - i) * 8)) & 0xff;
+    this.update(pad.subarray(0, padLen));
+    this.update(lenBytes);
+    return this.h.map(function (x) { return ('00000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
+  };
+  function sha256HexPure(bytes) { return new Sha256Pure().update(bytes).hexDigest(); }
 
   function toHex(digest) {
     return Array.from(new Uint8Array(digest)).map(function (b) {
@@ -66,22 +105,32 @@
     return Promise.resolve(sha256HexPure(new Uint8Array(buf)));
   }
 
-  /* Read the file in chunks, reporting progress, then hash it. */
+  /* Read the file in chunks, reporting progress, then hash it. When crypto.subtle is
+     available the whole buffer is hashed at once at the end; otherwise the pure-JS
+     hasher is fed chunk by chunk so progress keeps moving on large files. */
   function hashFileWithProgress(file, onProgress) {
-    var CHUNK = 4 * 1024 * 1024;
+    var subtle = global.crypto && global.crypto.subtle;
+    var useSubtle = !!(subtle && global.isSecureContext !== false);
+    var CHUNK = useSubtle ? 4 * 1024 * 1024 : 1024 * 1024; // smaller chunks for the slow pure path
+    var hasher = useSubtle ? null : new Sha256Pure();
     var parts = [];
     var loaded = 0;
+    function report() {
+      if (onProgress) onProgress(Math.min(100, Math.round((loaded / file.size) * 100)));
+    }
     function readNext(offset) {
       if (offset >= file.size) {
-        return mergeParts(parts).then(function (all) { return sha256Hex(all); });
+        if (useSubtle) return mergeParts(parts).then(function (all) { return sha256Hex(all); });
+        return Promise.resolve(hasher.hexDigest());
       }
       return new Promise(function (resolve, reject) {
         var reader = new FileReader();
         var slice = file.slice(offset, Math.min(offset + CHUNK, file.size));
         reader.onload = function () {
-          parts.push(reader.result);
+          var u8 = new Uint8Array(reader.result);
+          if (hasher) hasher.update(u8); else parts.push(reader.result);
           loaded += slice.size;
-          if (onProgress) onProgress(Math.min(100, Math.round((loaded / file.size) * 100)));
+          report();
           resolve();
         };
         reader.onerror = reject;
@@ -95,8 +144,20 @@
       arr.forEach(function (p) { out.set(new Uint8Array(p), off); off += p.byteLength; });
       return Promise.resolve(out.buffer);
     }
-    if (file.size === 0) return Promise.resolve(sha256Hex(new ArrayBuffer(0)));
+    if (file.size === 0) {
+      return Promise.resolve(useSubtle ? sha256Hex(new ArrayBuffer(0)) : hasher.hexDigest());
+    }
     return readNext(0);
+  }
+
+  /* Plan a chunked upload: list of {index, start, end} byte ranges. */
+  function chunkPlan(size, chunkSize) {
+    var plan = [];
+    if (!chunkSize || chunkSize <= 0 || size <= chunkSize) return plan;
+    for (var i = 0, off = 0; off < size; i++, off += chunkSize) {
+      plan.push({ index: i, start: off, end: Math.min(off + chunkSize, size) });
+    }
+    return plan;
   }
 
   function defang(value) {
@@ -152,6 +213,71 @@
     if (!dz || !form || !input) return;
     var pendingFile = null;
 
+    function showError(msg) {
+      if (progress && idle && errorBox) {
+        progress.style.display = 'none';
+        idle.style.display = 'block';
+        errorBox.style.display = 'block';
+        errorBox.textContent = msg;
+      }
+    }
+
+    function postChunk(url, fields, blob, onProgress) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new global.XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
+        xhr.onload = function () { resolve({ status: xhr.status, body: xhr.responseText }); };
+        xhr.onerror = function () { reject(new Error('network error')); };
+        var fd = new FormData();
+        Object.keys(fields).forEach(function (k) { fd.append(k, fields[k]); });
+        fd.append('file', blob, fields.name);
+        xhr.send(fd);
+      });
+    }
+
+    /* Large files: upload in chunks so no single request body exceeds the proxy's
+       limit (e.g. Cloudflare). Server reassembles, verifies SHA-256, and scans. */
+    function startChunkedUpload(file, sha256) {
+      var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
+      var plan = chunkPlan(file.size, chunkSize);
+      var total = plan.length;
+      var done = 0;
+      function report() {
+        if (bar) bar.style.width = Math.round((done / total) * 100) + '%';
+        if (status) status.textContent = 'Uploading ' + file.name + '… chunk ' + (done + 1) + '/' + total;
+      }
+      report();
+      var chain = Promise.resolve();
+      plan.forEach(function (part) {
+        chain = chain.then(function () {
+          report();
+          var blob = file.slice(part.start, part.end);
+          return postChunk('/file/upload/chunk', {
+            sha256: sha256, index: String(part.index), total: String(total), name: file.name,
+          }, blob, function (frac) {
+            if (bar) bar.style.width = Math.round(((done + frac) / total) * 100) + '%';
+          }).then(function (res) {
+            done++;
+            if (res.status === 200 || res.status === 202) {
+              var body = {};
+              try { body = JSON.parse(res.body); } catch (e) { /* keep {} */ }
+              if (body.sha256) return res; // final chunk: server assembled + queued the scan
+              if (body.status === 'chunk_stored') return res;
+              showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
+              throw new Error('chunk rejected');
+            }
+            showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
+            throw new Error('chunk failed');
+          });
+        });
+      });
+      return chain.then(function (res) { global.location.href = '/ui/file/' + sha256; })
+        .catch(function () { /* error already shown */ });
+    }
+
     function startUpload(file, sha256) {
       closeModal();
       if (idle) idle.style.display = 'none';
@@ -160,6 +286,8 @@
       if (spinner) spinner.style.display = 'none';
       if (status) status.textContent = 'Uploading ' + file.name + '…';
       if (bar) bar.style.width = '0%';
+      var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
+      if (chunkSize > 0 && file.size > chunkSize) return startChunkedUpload(file, sha256);
       var xhr = new global.XMLHttpRequest();
       xhr.open('POST', form.action);
       xhr.upload.onprogress = function (e) {
@@ -173,21 +301,11 @@
       xhr.onload = function () {
         if (xhr.status === 200 || xhr.status === 202) {
           global.location.href = '/ui/file/' + sha256;
-        } else if (progress && idle && errorBox) {
-          progress.style.display = 'none';
-          idle.style.display = 'block';
-          errorBox.style.display = 'block';
-          errorBox.textContent = 'Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200);
+        } else {
+          showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
         }
       };
-      xhr.onerror = function () {
-        if (progress && idle && errorBox) {
-          progress.style.display = 'none';
-          idle.style.display = 'block';
-          errorBox.style.display = 'block';
-          errorBox.textContent = 'Network error while uploading.';
-        }
-      };
+      xhr.onerror = function () { showError('Network error while uploading.'); };
       var fd = new FormData();
       fd.append('file', file, file.name);
       xhr.send(fd);
@@ -245,6 +363,7 @@
     sha256Hex: sha256Hex,
     sha256HexPure: sha256HexPure,
     hashFileWithProgress: hashFileWithProgress,
+    chunkPlan: chunkPlan,
     defang: defang,
     openModal: openModal,
     closeModal: closeModal,

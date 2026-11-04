@@ -108,6 +108,86 @@ def test_openapi_documents_response_models(client):
     assert props["engines"]["items"]["$ref"].endswith("/EngineVerdict")
 
 
+def test_chunked_upload_assembles_and_scans(client, monkeypatch):
+    import time
+
+    monkeypatch.setattr(settings, "chunk_upload_size", 1024)  # 1 KiB chunks
+    content = b"chunked upload test payload " * 200  # ~6 KiB -> 6 chunks
+    sha = hashlib.sha256(content).hexdigest()
+    total = 6
+    for i in range(total - 1):
+        r = client.post(
+            "/file/upload/chunk",
+            files={"file": (f"part{i}", content[i * 1024 : (i + 1) * 1024])},
+            data={"sha256": sha, "index": str(i), "total": str(total), "name": "chunked.bin"},
+        )
+        assert r.status_code == 202
+        assert r.json()["status"] == "chunk_stored"
+        assert r.json()["received"] == i + 1
+    # last chunk triggers assembly + scan
+    r = client.post(
+        "/file/upload/chunk",
+        files={"file": ("part5", content[5 * 1024 :])},
+        data={"sha256": sha, "index": "5", "total": str(total), "name": "chunked.bin"},
+    )
+    assert r.status_code == 202 and r.json()["sha256"] == sha
+    for _ in range(50):
+        if client.get(f"/api/v2/files/{sha}").json()["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert client.get(f"/api/v2/files/{sha}").json()["status"] == "done"
+    assert not (Path(settings.upload_dir) / ".chunks" / sha).exists()  # cleaned up
+
+
+def test_chunked_upload_rejects_bad_input(client, monkeypatch):
+    monkeypatch.setattr(settings, "chunk_upload_size", 1024)
+    sha = "a" * 64
+    # invalid sha / index / total
+    assert (
+        client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"x")},
+            data={"sha256": "zz", "index": "0", "total": "1"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"x")},
+            data={"sha256": sha, "index": "5", "total": "2"},
+        ).status_code
+        == 400
+    )
+    # assembled hash mismatch -> 400, chunks cleaned
+    r = client.post(
+        "/file/upload/chunk",
+        files={"file": ("p", b"wrong bytes")},
+        data={"sha256": sha, "index": "0", "total": "1"},
+    )
+    assert r.status_code == 400
+    assert "verification" in r.json()["detail"]
+    # empty chunk rejected
+    assert (
+        client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"")},
+            data={"sha256": sha, "index": "0", "total": "1"},
+        ).status_code
+        == 400
+    )
+    # disabled when CHUNK_UPLOAD_SIZE=0
+    monkeypatch.setattr(settings, "chunk_upload_size", 0)
+    assert (
+        client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"x")},
+            data={"sha256": sha, "index": "0", "total": "1"},
+        ).status_code
+        == 404
+    )
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
