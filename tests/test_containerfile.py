@@ -101,15 +101,13 @@ def test_github_actions_pinned_by_sha():
                 )
 
 
-def test_zizmor_workflow_runs_like_tests_and_on_dispatch():
-    # same triggers as tests.yml: every push to main and every PR (no paths filter)
-    wf = ROOT / ".github" / "workflows" / "zizmor.yml"
-    t = wf.read_text()
-    assert "workflow_dispatch:" in t
-    assert "paths:" not in t
-    assert "branches: [main]" in t and "pull_request:" in t
-    assert "zizmorcore/zizmor@" in t
-    assert "persist-credentials: false" in t
+def test_zizmor_runs_inside_tests_workflow():
+    # zizmor runs as a step of the Unit Tests job (no separate workflow/job);
+    # the upstream zizmor GitHub Action is broken at v1.32.0 (empty ZIZMOR_VERSION
+    # build arg), so we run the PyPI binary via uvx instead
+    assert not (ROOT / ".github" / "workflows" / "zizmor.yml").exists()
+    t = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+    assert "uvx zizmor==1.32.0 --offline .github/workflows/" in t
 
 
 def test_containerignore_present_and_covers_secrets():

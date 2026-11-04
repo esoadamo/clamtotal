@@ -52,6 +52,9 @@ jobs:
       - name: Run frontend JS tests
         run: node --test tests/js/app.test.mjs
 
+      - name: Run zizmor workflow-security audit
+        run: uvx zizmor==1.32.0 --offline .github/workflows/
+
   sast:
     name: SAST — bandit source-code scan
     runs-on: ubuntu-latest
