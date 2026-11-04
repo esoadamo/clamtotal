@@ -1,4 +1,4 @@
-# AGENT.md — ClamTotal
+# AGENTS.md — ClamTotal
 
 ClamTotal is a VirusTotal lookalike web app: users upload a file, it is scanned
 with ClamAV, and a VirusTotal-style report page is shown (detections, hashes,

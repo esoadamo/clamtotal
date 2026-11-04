@@ -123,4 +123,4 @@ uv run ty check               # type check
 uv run alembic revision --autogenerate -m "description"   # new migration
 ```
 
-See [AGENT.md](AGENT.md) for project conventions.
+See [AGENTS.md](AGENTS.md) for project conventions.
