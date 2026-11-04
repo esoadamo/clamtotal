@@ -100,23 +100,21 @@ def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
             str(tmp_path / "s.bin"),
         ),
     )
-    captured = {}
 
-    def fake_connect(addr, timeout=None):
-        s = FakeSocket(b"/tmp/x: Win.Test.EICAR_HDB-1 FOUND\x00")
-        orig = s.sendall
+    class RecordingSocket(FakeSocket):
+        def __init__(self):
+            super().__init__(b"/tmp/x: Win.Test.EICAR_HDB-1 FOUND\x00")
+            self.cmds: list[bytes] = []
 
-        def sendall(d):
-            captured["cmd"] = d
-            orig(d)
+        def sendall(self, data: bytes) -> None:
+            self.cmds.append(data)
+            super().sendall(data)
 
-        s.sendall = sendall
-        return s
-
-    monkeypatch.setattr(socket, "create_connection", fake_connect)
+    fake = RecordingSocket()
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
     result = ClamdScanner().scan(b"this is definitely larger than 8 bytes")
     assert result.verdict == "infected" and result.signature == "Win.Test.EICAR_HDB-1"
-    assert captured["cmd"].startswith(b"zSCAN ")  # file-based command, not zINSTREAM
+    assert fake.cmds[0].startswith(b"zSCAN ")  # file-based command, not zINSTREAM
     assert not (tmp_path / "s.bin").exists()  # temp file removed after scan
 
 
