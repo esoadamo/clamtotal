@@ -216,10 +216,10 @@ def test_get_scanner_clamd_alias_and_unknown_mode_fallback(monkeypatch):
         get_scanner()
 
     get_scanner.cache_clear()
-    # unknown mode values fall back to auto (still tries clamd first)
+    # unknown mode values fail fast instead of silently guessing a backend
     monkeypatch.setattr(settings, "clam_mode", "bogus")
-    monkeypatch.setattr(ClamdScanner, "available", lambda self: True)
-    assert isinstance(get_scanner(), ClamdScanner)
+    with pytest.raises(ScannerUnavailableError, match=r"unknown CLAM_MODE='bogus'"):
+        get_scanner()
 
 
 def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):

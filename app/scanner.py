@@ -165,7 +165,11 @@ _MODE_ALIASES = {
 @lru_cache(maxsize=1)
 def get_scanner() -> Scanner:
     raw_mode = settings.clam_mode.lower()
-    mode = _MODE_ALIASES.get(raw_mode, "auto")  # unknown values fall back to auto, never skip clamd
+    if raw_mode not in _MODE_ALIASES:
+        raise ScannerUnavailableError(
+            f"unknown CLAM_MODE={raw_mode!r}: expected one of auto, daemon (or clamd/tcp), cli"
+        )
+    mode = _MODE_ALIASES[raw_mode]
     if mode in ("auto", "daemon"):
         clamd = ClamdScanner()
         # clamd may still be loading its databases at startup — wait up to ~60s for PONG.
