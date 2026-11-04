@@ -212,3 +212,29 @@ test('runPool handles empty input and concurrency > length', async () => {
   assert.deepEqual(await CT.runPool([], 4, async (x) => x), []);
   assert.deepEqual(await CT.runPool([1, 2], 10, async (x) => x + 1), [2, 3]);
 });
+
+test('withRetry retries transient errors then succeeds', async () => {
+  let calls = 0;
+  const r = await CT.withRetry(() => {
+    calls++;
+    if (calls < 3) { const e = new Error('524'); e.transient = true; throw e; }
+    return 'ok';
+  }, 3, 1);
+  assert.equal(r, 'ok');
+  assert.equal(calls, 3);
+});
+
+test('withRetry does not retry non-transient errors and gives up after attempts', async () => {
+  let calls = 0;
+  await assert.rejects(
+    CT.withRetry(() => { calls++; throw new Error('fatal'); }, 3, 1),
+    /fatal/,
+  );
+  assert.equal(calls, 1); // non-transient: no retry
+  let calls2 = 0;
+  await assert.rejects(
+    CT.withRetry(() => { calls2++; const e = new Error('524'); e.transient = true; throw e; }, 2, 1),
+    /524/,
+  );
+  assert.equal(calls2, 2); // gave up after attempts
+});

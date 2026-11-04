@@ -174,6 +174,19 @@
     return Math.min(100, Math.round(((doneBytes + inFlightBytes) / size) * 100));
   }
 
+  /* Retry an async fn up to `attempts` times on transient failures (err.transient),
+     with a short delay between tries. Proxies like Cloudflare occasionally return
+     524 (origin timeout) on long requests — those chunks must be retried, not fail
+     the whole upload. */
+  function withRetry(fn, attempts, delayMs) {
+    attempts = attempts || 3;
+    return Promise.resolve().then(fn).catch(function (err) {
+      if (attempts <= 1 || !err || !err.transient) throw err;
+      return new Promise(function (res) { setTimeout(res, delayMs || 1000); })
+        .then(function () { return withRetry(fn, attempts - 1, delayMs); });
+    });
+  }
+
   /* Run async fn over items with at most `concurrency` in flight (ordered results).
      Used to upload chunks in parallel — the server stores them by index, so order
      does not matter, and parallel requests cut total wall time several-fold. */
@@ -268,7 +281,7 @@
           if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
         };
         xhr.onload = function () { resolve({ status: xhr.status, body: xhr.responseText }); };
-        xhr.onerror = function () { reject(new Error('network error')); };
+        xhr.onerror = function () { var e = new Error('network error'); e.transient = true; reject(e); };
         var fd = new FormData();
         Object.keys(fields).forEach(function (k) { fd.append(k, fields[k]); });
         fd.append('file', blob, fields.name);
@@ -299,12 +312,22 @@
         var blob = file.slice(part.start, part.end);
         inFlight[part.index] = 0;
         report();
-        return postChunk('/file/upload/chunk', {
-          sha256: sha256, index: String(part.index), total: String(total), name: file.name,
-        }, blob, function (frac) {
-          inFlight[part.index] = (part.end - part.start) * frac;
-          report();
-        }).then(function (res) {
+        // retry transient proxy failures (524/502/5xx, network errors) per chunk
+        return withRetry(function () {
+          return postChunk('/file/upload/chunk', {
+            sha256: sha256, index: String(part.index), total: String(total), name: file.name,
+          }, blob, function (frac) {
+            inFlight[part.index] = (part.end - part.start) * frac;
+            report();
+          }).then(function (res) {
+            if (res.status >= 500 || res.status === 524 || res.status === 502) {
+              var err = new Error('transient ' + res.status);
+              err.transient = true;
+              throw err;
+            }
+            return res;
+          });
+        }, 3, 1500).then(function (res) {
           doneBytes += part.end - part.start;
           delete inFlight[part.index];
           report();
@@ -418,6 +441,7 @@
     shouldUseChunks: shouldUseChunks,
     chunkProgressPct: chunkProgressPct,
     runPool: runPool,
+    withRetry: withRetry,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
     defang: defang,
     openModal: openModal,
