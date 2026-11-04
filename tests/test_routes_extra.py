@@ -139,6 +139,50 @@ def test_chunked_upload_assembles_and_scans(client, monkeypatch):
     assert not (Path(settings.upload_dir) / ".chunks" / sha).exists()  # cleaned up
 
 
+def test_chunk_upload_rate_limit_scaled_by_chunk_size(client, monkeypatch):
+    import app.main as m
+
+    sha = "d" * 64
+    # plain upload limit = 2 per window; chunk carries 1KB, max file is 512MB -> scaled up hugely
+    monkeypatch.setattr(settings, "rate_limit_upload", 2)
+    monkeypatch.setattr(settings, "rate_limit_window_seconds", 3600)
+    monkeypatch.setattr(settings, "chunk_upload_size", 1024)
+    monkeypatch.setattr(settings, "max_upload_size", 512 * 1024 * 1024)
+    m._rate_buckets.clear()
+    # many chunk requests must pass (scaled limit), while plain uploads are capped at 2
+    for i in range(10):
+        r = client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"x" * 100)},
+            data={"sha256": sha, "index": str(i), "total": "100"},
+        )
+        assert r.status_code == 202, (i, r.status_code)  # chunk_stored
+    assert client.post("/file/upload", files={"file": ("a.bin", b"a" * 16)}).status_code in (
+        200,
+        202,
+    )
+    assert client.post("/file/upload", files={"file": ("b.bin", b"b" * 16)}).status_code in (
+        200,
+        202,
+    )
+    assert client.post("/file/upload", files={"file": ("c.bin", b"c" * 16)}).status_code == 429
+    m._rate_buckets.clear()
+
+
+def test_openapi_docs_mention_scaled_chunk_limit(client, monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(settings, "rate_limit_upload", 5)
+    monkeypatch.setattr(settings, "chunk_upload_size", 1024)
+    monkeypatch.setattr(settings, "max_upload_size", 512 * 1024 * 1024)
+    m.app.openapi_schema = None
+    desc = client.get("/openapi.json").json()["info"]["description"]
+    assert (
+        "POST /file/upload/chunk" in desc and "scaled by MAX_UPLOAD_SIZE/CHUNK_UPLOAD_SIZE" in desc
+    )
+    m.app.openapi_schema = None
+
+
 def test_chunked_upload_rejects_bad_input(client, monkeypatch):
     monkeypatch.setattr(settings, "chunk_upload_size", 1024)
     sha = "a" * 64

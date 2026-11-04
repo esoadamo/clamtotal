@@ -92,19 +92,29 @@ def _rate_limits_doc() -> str:
             return f"- {endpoints}: unlimited (rate limit disabled)"
         return f"- {endpoints}: {limit} requests per {window}s per IP (HTTP 429 when exceeded)"
 
-    return "\n".join(
-        [
-            "## Rate limits (per client IP)",
-            fmt(
-                settings.rate_limit_upload,
-                "Uploads (`POST /file/upload`, `POST /api/v2/files`)",
-            ),
-            fmt(
-                settings.rate_limit_browse,
-                "Browsing result pages (`GET /ui/`, `/ui/search`, `/ui/file/{hash}`)",
-            ),
-        ]
-    )
+    lines = [
+        "## Rate limits (per client IP)",
+        fmt(
+            settings.rate_limit_upload,
+            "Uploads (`POST /file/upload`, `POST /api/v2/files`)",
+        ),
+        fmt(
+            settings.rate_limit_browse,
+            "Browsing result pages (`GET /ui/`, `/ui/search`, `/ui/file/{hash}`)",
+        ),
+    ]
+    if settings.rate_limit_upload > 0 and settings.chunk_upload_size > 0:
+        scaled = max(
+            settings.rate_limit_upload,
+            settings.rate_limit_upload
+            * settings.max_upload_size
+            // max(settings.chunk_upload_size, 1),
+        )
+        lines.append(
+            f"- Chunked uploads (`POST /file/upload/chunk`): {scaled} requests per {window}s per IP"
+            " (scaled by MAX_UPLOAD_SIZE/CHUNK_UPLOAD_SIZE, so both paths allow the same bytes)"
+        )
+    return "\n".join(lines)
 
 
 def _custom_openapi() -> dict:
@@ -443,9 +453,19 @@ async def upload_chunk(
     """Chunked upload for large files (behind proxies with request-body size limits).
     Chunks are stored under UPLOAD_DIR/.chunks/<sha256>/; when the last one arrives the
     file is reassembled, its SHA-256 verified, and the normal scan is enqueued."""
-    _rate_limit(request, settings.rate_limit_upload, "upload")
     if settings.chunk_upload_size <= 0:
         raise HTTPException(status_code=404, detail="chunked upload disabled")
+    # each chunk request carries only chunk_upload_size bytes, while a whole-file upload
+    # carries up to max_upload_size — scale the request limit so both paths allow the
+    # same BYTES per window (never fewer requests than the plain upload limit)
+    upload_limit = settings.rate_limit_upload
+    if upload_limit > 0:
+        upload_limit = max(
+            upload_limit,
+            upload_limit * settings.max_upload_size // max(settings.chunk_upload_size, 1),
+        )
+    # separate bucket from whole-file uploads so the scaled limit applies to chunks only
+    _rate_limit(request, upload_limit, "upload_chunk")
     if not _CHUNK_NAME_RE.match(sha256) or total < 1 or not 0 <= index < total:
         raise HTTPException(status_code=400, detail="invalid sha256/index/total")
     data = await file.read()
