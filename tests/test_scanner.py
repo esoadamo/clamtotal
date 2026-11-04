@@ -83,7 +83,7 @@ def test_clamd_newline_terminated_response_also_accepted(monkeypatch):
 def test_clamd_unexpected_response(monkeypatch):
     fake = FakeSocket(b"INSTREAM size limit exceeded\x00")
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
-    with pytest.raises(ScannerUnavailableError):
+    with pytest.raises(ScannerUnavailableError, match="StreamMaxLength"):
         ClamdScanner().scan(b"data")
 
 

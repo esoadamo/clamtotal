@@ -3,6 +3,12 @@ set -e
 
 mkdir -p /data/uploads /rules
 
+# Keep clamd's INSTREAM size cap in sync with the app's MAX_UPLOAD_SIZE (default 512M);
+# clamd's built-in default (100M) would reject uploads the app accepts.
+MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-536870912}"
+sed -i -e "s/^#\\{0,1\\}StreamMaxLength.*/StreamMaxLength ${MAX_UPLOAD_SIZE}/" /etc/clamav/clamd.conf
+{ grep -q '^StreamMaxLength' /etc/clamav/clamd.conf || echo "StreamMaxLength ${MAX_UPLOAD_SIZE}" >> /etc/clamav/clamd.conf; }
+
 # Self-heal: older images left fangfrisch's sqlite metadata DB inside clamd's DB dir,
 # which makes clamd abort with "Malformed database" — remove it if present.
 rm -f /var/lib/clamav/fangfrisch.db

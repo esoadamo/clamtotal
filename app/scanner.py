@@ -87,6 +87,11 @@ class ClamdScanner:
         match = re.match(r"stream:\s+(.+?)\s+FOUND", text)
         if match:
             return ScanResult("infected", match.group(1), self.engine, text)
+        if "size limit" in text:
+            raise ScannerUnavailableError(
+                f"file exceeds clamd StreamMaxLength ({text!r}) — raise MAX_UPLOAD_SIZE and "
+                "clamd's StreamMaxLength together"
+            )
         raise ScannerUnavailableError(f"unexpected clamd response: {text!r}")
 
 
