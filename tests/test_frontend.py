@@ -173,12 +173,6 @@ def test_plausible_script_optional(client, monkeypatch):
         assert '<script defer src="https://plausible.example/js/script.js"></script>' in page, path
 
 
-def test_static_files_served_with_no_cache_header(client):
-    r = client.get("/static/app.js")
-    assert r.status_code == 200
-    assert r.headers.get("cache-control") == "no-cache"
-
-
 def test_footer_shows_app_version_when_set(client, monkeypatch):
     from app.main import templates
 

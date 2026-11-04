@@ -122,16 +122,6 @@ app.openapi = _custom_openapi  # type: ignore
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 
-@app.middleware("http")
-async def _no_cache_static(request: Request, call_next):
-    """Static assets are referenced with ?v=<build stamp> so caches are busted per
-    build; no-cache lets clients revalidate via ETag instead of serving stale JS."""
-    response = await call_next(request)
-    if request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache"
-    return response
-
-
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
