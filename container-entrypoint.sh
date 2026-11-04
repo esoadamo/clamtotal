@@ -37,7 +37,8 @@ fi
 
 clamd &
 
-# Wait until clamd accepts INSTREAM connections on TCP 3310.
+# Wait until clamd answers an INSTREAM PING with PONG on TCP 3310 (a bare TCP
+# connect is not enough — clamd must have finished loading its databases).
 python - <<'EOF'
 import socket
 import sys
@@ -45,11 +46,20 @@ import time
 
 for _ in range(60):
     try:
-        socket.create_connection(("127.0.0.1", 3310), timeout=1).close()
-        sys.exit(0)
+        with socket.create_connection(("127.0.0.1", 3310), timeout=2) as s:
+            s.sendall(b"zPING\0")
+            resp = b""
+            while b"\n" not in resp:
+                part = s.recv(64)
+                if not part:
+                    break
+                resp += part
+            if b"PONG" in resp:
+                sys.exit(0)
     except OSError:
-        time.sleep(1)
-sys.exit("clamd did not start listening on 127.0.0.1:3310")
+        pass
+    time.sleep(1)
+sys.exit("clamd did not answer PING on 127.0.0.1:3310")
 EOF
 
 # Apply database migrations (creates the tables in /data/clamtotal.db on first start)

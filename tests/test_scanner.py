@@ -47,9 +47,10 @@ class FakeSocket:
 
 
 @pytest.fixture(autouse=True)
-def clear_caches():
+def clear_caches(monkeypatch):
     get_scanner.cache_clear()
     get_yara_scanner.cache_clear()
+    monkeypatch.setattr(scanner_module.time, "sleep", lambda s: None)  # keep retry loop fast
     yield
     get_scanner.cache_clear()
     get_yara_scanner.cache_clear()
@@ -78,8 +79,18 @@ def test_clamd_unexpected_response(monkeypatch):
 
 
 def test_clamd_available_and_unavailable(monkeypatch):
-    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: FakeSocket(b""))
+    # available() does a real INSTREAM PING and requires PONG
+    monkeypatch.setattr(
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"PONG\n")
+    )
     assert ClamdScanner().available() is True
+    monkeypatch.setattr(
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"stream: OK\n")
+    )
+    assert ClamdScanner().available() is False  # no PONG -> not ready
+    # connection closed before any response (empty recv) -> break path
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: FakeSocket(b""))
+    assert ClamdScanner().available() is False
     monkeypatch.setattr(
         socket,
         "create_connection",

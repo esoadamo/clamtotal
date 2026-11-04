@@ -5,6 +5,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -50,9 +51,18 @@ class ClamdScanner:
         return sock
 
     def available(self) -> bool:
+        """Real readiness check: clamd must answer the INSTREAM PING with PONG
+        (a bare TCP connect can succeed before clamd finished loading databases)."""
         try:
-            with self._connect():
-                return True
+            with self._connect() as sock:
+                sock.sendall(b"zPING\0")
+                response = b""
+                while b"\n" not in response:
+                    part = sock.recv(64)
+                    if not part:
+                        break
+                    response += part
+                return b"PONG" in response
         except OSError:
             return False
 
@@ -148,17 +158,24 @@ def get_scanner() -> Scanner:
     mode = settings.clam_mode.lower()
     if mode in ("auto", "daemon"):
         clamd = ClamdScanner()
-        if clamd.available():
-            return clamd
+        for _ in range(5):  # clamd may still be loading its databases at startup
+            if clamd.available():
+                return clamd
+            time.sleep(1)
         if mode == "daemon":
             target = settings.clamd_socket or f"{settings.clamd_host}:{settings.clamd_port}"
-            raise ScannerUnavailableError(f"clamd not reachable at {target}")
+            raise ScannerUnavailableError(
+                f"clamd not reachable at {target} (CLAM_MODE=daemon): "
+                "is clamd running and listening on TCP 3310?"
+            )
     if mode in ("auto", "cli"):
         if shutil.which(settings.clamscan_path):
             return ClamscanScanner()
         if mode == "cli":
             raise ScannerUnavailableError(f"clamscan binary not found: {settings.clamscan_path}")
+    target = settings.clamd_socket or f"{settings.clamd_host}:{settings.clamd_port}"
     raise ScannerUnavailableError(
-        "no ClamAV backend available: run clamd (CLAM_MODE=daemon) "
-        "or install clamscan (CLAM_MODE=cli)"
+        f"no ClamAV backend available (CLAM_MODE={mode!r}): clamd did not answer PING at "
+        f"{target} and clamscan binary not found ({settings.clamscan_path}) — "
+        "run clamd (CLAM_MODE=daemon) or install clamscan (CLAM_MODE=cli)"
     )

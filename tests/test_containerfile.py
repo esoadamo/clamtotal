@@ -60,6 +60,7 @@ def test_entrypoint_bootstraps_signatures_before_clamd():
     # ('No supported database files found'), so the first-launch bootstrap must run first
     ep = (ROOT / "container-entrypoint.sh").read_text()
     assert ep.index("update-signatures.sh") < ep.index("clamd &")
+    assert "zPING" in ep and "PONG" in ep  # readiness = real clamd PING, not just TCP connect
     cf = (ROOT / "Containerfile").read_text()
     assert (
         "NotifyClamd disabled" in cf
