@@ -120,6 +120,8 @@ def _defang(value: str) -> str:
 templates.env.filters["defang"] = _defang
 _plausible_url: Any = settings.plausible_script_url  # Any: jinja globals stub excludes str
 templates.env.globals["plausible_script_url"] = _plausible_url
+_app_version: Any = settings.app_version  # Any: jinja globals stub excludes str
+templates.env.globals["app_version"] = _app_version
 
 Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 

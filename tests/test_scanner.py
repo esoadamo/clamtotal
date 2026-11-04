@@ -1,6 +1,8 @@
+import os
 import shutil
 import socket
 import struct
+import tempfile
 
 import pytest
 
@@ -85,6 +87,92 @@ def test_clamd_unexpected_response(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
     with pytest.raises(ScannerUnavailableError, match="StreamMaxLength"):
         ClamdScanner().scan(b"data")
+
+
+def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
+    # above STREAM_SCAN_MAX_SIZE the sample goes through zSCAN <path>, not INSTREAM
+    monkeypatch.setattr(settings, "stream_scan_max_size", 8)
+    monkeypatch.setattr(
+        tempfile,
+        "mkstemp",
+        lambda prefix="": (
+            os.open(str(tmp_path / "s.bin"), os.O_CREAT | os.O_WRONLY),
+            str(tmp_path / "s.bin"),
+        ),
+    )
+    captured = {}
+
+    def fake_connect(addr, timeout=None):
+        s = FakeSocket(b"/tmp/x: Win.Test.EICAR_HDB-1 FOUND\x00")
+        orig = s.sendall
+
+        def sendall(d):
+            captured["cmd"] = d
+            orig(d)
+
+        s.sendall = sendall
+        return s
+
+    monkeypatch.setattr(socket, "create_connection", fake_connect)
+    result = ClamdScanner().scan(b"this is definitely larger than 8 bytes")
+    assert result.verdict == "infected" and result.signature == "Win.Test.EICAR_HDB-1"
+    assert captured["cmd"].startswith(b"zSCAN ")  # file-based command, not zINSTREAM
+    assert not (tmp_path / "s.bin").exists()  # temp file removed after scan
+
+
+def test_clamd_large_file_clean_via_temp_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "stream_scan_max_size", 4)
+    monkeypatch.setattr(
+        tempfile,
+        "mkstemp",
+        lambda prefix="": (
+            os.open(str(tmp_path / "c.bin"), os.O_CREAT | os.O_WRONLY),
+            str(tmp_path / "c.bin"),
+        ),
+    )
+    monkeypatch.setattr(
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"/tmp/x: OK\x00")
+    )
+    result = ClamdScanner().scan(b"12345")
+    assert result.verdict == "clean"
+
+
+def test_clamd_large_file_size_limit_and_unexpected(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "stream_scan_max_size", 4)
+    monkeypatch.setattr(
+        tempfile,
+        "mkstemp",
+        lambda prefix="": (
+            os.open(str(tmp_path / "x.bin"), os.O_CREAT | os.O_WRONLY),
+            str(tmp_path / "x.bin"),
+        ),
+    )
+    # clamd rejects the file itself (StreamMaxLength) -> clear error
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda addr, timeout=None: FakeSocket(b"x: INSTREAM size limit exceeded\x00"),
+    )
+    with pytest.raises(ScannerUnavailableError, match="StreamMaxLength"):
+        ClamdScanner().scan(b"12345")
+    # anything else unexpected
+    monkeypatch.setattr(
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"x: weird\x00")
+    )
+    with pytest.raises(ScannerUnavailableError, match="unexpected clamd response"):
+        ClamdScanner().scan(b"12345")
+    # connection closed before any response -> break path
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: FakeSocket(b""))
+    with pytest.raises(ScannerUnavailableError, match="unexpected clamd response"):
+        ClamdScanner().scan(b"12345")
+
+
+def test_clamd_small_file_uses_instream(monkeypatch):
+    monkeypatch.setattr(settings, "stream_scan_max_size", 1024)
+    fake = FakeSocket(b"stream: OK\x00")
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
+    ClamdScanner().scan(b"small")
+    assert fake.sent.startswith(b"zINSTREAM\0")
 
 
 def test_clamd_available_and_unavailable(monkeypatch):

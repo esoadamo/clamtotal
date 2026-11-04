@@ -7,6 +7,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./clamtotal.db"
     upload_dir: str = "./uploads"
     max_upload_size: int = 512 * 1024 * 1024  # bytes
+    # files larger than this (but <= max_upload_size) are scanned via clamd's
+    # file-based SCAN command from a temp file instead of INSTREAM; clamd's own
+    # StreamMaxLength should match this value (the container entrypoint syncs it)
+    stream_scan_max_size: int = 100 * 1024 * 1024  # bytes
+
+    # shown in the page footer; the container sets it at BUILD time (UTC YYMMDD.hhmmss)
+    app_version: str = ""
 
     # auto | daemon | cli — which ClamAV backend to use ("clamd"/"tcp" accepted as alias of
     # "daemon"); any other value fails startup with an error instead of silently guessing

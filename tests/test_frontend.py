@@ -171,6 +171,15 @@ def test_plausible_script_optional(client, monkeypatch):
         assert '<script defer src="https://plausible.example/js/script.js"></script>' in page, path
 
 
+def test_footer_shows_app_version_when_set(client, monkeypatch):
+    from app.main import templates
+
+    assert "v261104" not in client.get("/ui/").text  # hidden when unset
+    monkeypatch.setitem(templates.env.globals, "app_version", "261104.093000")
+    page = client.get("/ui/").text
+    assert "v261104.093000" in page
+
+
 def test_footer_links_to_github_repo_and_api_docs(client):
     for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
         page = client.get(path).text

@@ -201,12 +201,19 @@ def test_compose_persists_yara_rules():
     assert "yara-rules:" in compose.split("volumes:")[1]
 
 
-def test_clamd_stream_max_length_synced_with_app_limit():
-    # clamd's default StreamMaxLength (100M) would reject uploads the app allows
-    # (MAX_UPLOAD_SIZE default 512M) — the entrypoint must sync them
+def test_clamd_stream_max_length_synced_with_stream_scan_max_size():
+    # clamd's INSTREAM cap must track STREAM_SCAN_MAX_SIZE (default 100M); larger files
+    # are scanned via clamd's file-based SCAN instead
     ep = (ROOT / "container-entrypoint.sh").read_text()
-    assert "StreamMaxLength ${MAX_UPLOAD_SIZE}" in ep
-    assert "MAX_UPLOAD_SIZE:-536870912" in ep
+    assert "StreamMaxLength ${STREAM_SCAN_MAX_SIZE}" in ep
+    assert "STREAM_SCAN_MAX_SIZE:-104857600" in ep
+
+
+def test_app_version_stamped_at_build_time():
+    cf = (ROOT / "Containerfile").read_text()
+    assert "date -u +%y%m%d.%H%M%S > /app/.build-version" in cf
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert "APP_VERSION" in ep and "/app/.build-version" in ep
 
 
 def test_containerignore_present_and_covers_secrets():

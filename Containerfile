@@ -68,7 +68,8 @@ RUN sed -i \
 RUN mkdir -p /rules && cp -r /app/app/rules/. /rules/
 
 COPY container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
-RUN chmod +x /usr/local/bin/container-entrypoint.sh
+RUN chmod +x /usr/local/bin/container-entrypoint.sh \
+    && date -u +%y%m%d.%H%M%S > /app/.build-version  # build timestamp shown as the app version
 
 EXPOSE 8000
 VOLUME ["/data", "/rules"]

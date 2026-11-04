@@ -3,11 +3,14 @@ set -e
 
 mkdir -p /data/uploads /rules
 
-# Keep clamd's INSTREAM size cap in sync with the app's MAX_UPLOAD_SIZE (default 512M);
-# clamd's built-in default (100M) would reject uploads the app accepts.
-MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-536870912}"
-sed -i -e "s/^#\\{0,1\\}StreamMaxLength.*/StreamMaxLength ${MAX_UPLOAD_SIZE}/" /etc/clamav/clamd.conf
-{ grep -q '^StreamMaxLength' /etc/clamav/clamd.conf || echo "StreamMaxLength ${MAX_UPLOAD_SIZE}" >> /etc/clamav/clamd.conf; }
+# Keep clamd's INSTREAM size cap in sync with the app's STREAM_SCAN_MAX_SIZE (default 100M).
+# Files above it (but below MAX_UPLOAD_SIZE=512M) are scanned via clamd's file-based SCAN.
+STREAM_SCAN_MAX_SIZE="${STREAM_SCAN_MAX_SIZE:-104857600}"
+sed -i -e "s/^#\\{0,1\\}StreamMaxLength.*/StreamMaxLength ${STREAM_SCAN_MAX_SIZE}/" /etc/clamav/clamd.conf
+{ grep -q '^StreamMaxLength' /etc/clamav/clamd.conf || echo "StreamMaxLength ${STREAM_SCAN_MAX_SIZE}" >> /etc/clamav/clamd.conf; }
+
+# App version stamped at image BUILD time (YYMMDD.hhmmss UTC), shown in the footer
+export APP_VERSION="${APP_VERSION:-$(cat /app/.build-version 2>/dev/null || echo dev)}"
 
 # Self-heal: older images left fangfrisch's sqlite metadata DB inside clamd's DB dir,
 # which makes clamd abort with "Malformed database" — remove it if present.

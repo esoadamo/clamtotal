@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import socket
 import struct
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -67,6 +69,42 @@ class ClamdScanner:
             return False
 
     def scan(self, data: bytes) -> ScanResult:
+        if len(data) > settings.stream_scan_max_size:
+            return self._scan_file(data)
+        return self._scan_stream(data)
+
+    def _scan_file(self, data: bytes) -> ScanResult:
+        """Scan a large sample via clamd's file-based SCAN command (INSTREAM is
+        capped by clamd's StreamMaxLength). The temp file is removed afterwards."""
+        fd, path = tempfile.mkstemp(prefix="clamtotal-scan-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            with self._connect() as sock:
+                sock.sendall(f"zSCAN {path}\0".encode())
+                response = b""
+                while b"\n" not in response and b"\x00" not in response:
+                    part = sock.recv(4096)
+                    if not part:
+                        break
+                    response += part
+        finally:
+            Path(path).unlink(missing_ok=True)
+        text = response.decode(errors="replace").replace("\x00", "").strip()
+        # clamd SCAN replies "<path>: OK" or "<path>: <signature> FOUND"
+        if text.endswith(": OK"):
+            return ScanResult("clean", None, self.engine, text)
+        match = re.search(r":\s+(.+?)\s+FOUND$", text)
+        if match:
+            return ScanResult("infected", match.group(1), self.engine, text)
+        if "size limit" in text:
+            raise ScannerUnavailableError(
+                f"file exceeds clamd StreamMaxLength ({text!r}) — raise STREAM_SCAN_MAX_SIZE and "
+                "clamd's StreamMaxLength together"
+            )
+        raise ScannerUnavailableError(f"unexpected clamd response: {text!r}")
+
+    def _scan_stream(self, data: bytes) -> ScanResult:
         with self._connect() as sock:
             sock.sendall(b"zINSTREAM\0")
             for offset in range(0, len(data), settings.clamd_chunk_size):
@@ -89,7 +127,7 @@ class ClamdScanner:
             return ScanResult("infected", match.group(1), self.engine, text)
         if "size limit" in text:
             raise ScannerUnavailableError(
-                f"file exceeds clamd StreamMaxLength ({text!r}) — raise MAX_UPLOAD_SIZE and "
+                f"file exceeds clamd StreamMaxLength ({text!r}) — raise STREAM_SCAN_MAX_SIZE and "
                 "clamd's StreamMaxLength together"
             )
         raise ScannerUnavailableError(f"unexpected clamd response: {text!r}")
