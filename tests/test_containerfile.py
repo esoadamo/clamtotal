@@ -222,7 +222,10 @@ def test_entrypoint_uses_prebuilt_venv_no_runtime_sync():
     ep = (ROOT / "container-entrypoint.sh").read_text()
     assert "/app/.venv/bin/uvicorn" in ep
     assert "/app/.venv/bin/alembic" in ep
-    assert "uv run" not in ep
+    # no actual 'uv run ...' command lines (comments may mention it)
+    assert not [
+        line for line in ep.splitlines() if line.strip().startswith(("uv run ", "exec uv run "))
+    ]
 
 
 def test_containerignore_present_and_covers_secrets():
