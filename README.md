@@ -93,7 +93,11 @@ are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=false` (or bak
 into the image with `--build-arg AIRGAPPED=true`). To customize the unofficial
 signature sources (fangfrisch), mount your own config over the baked-in one:
 `-v ./fangfrisch.conf:/etc/fangfrisch.conf:ro` (or set `FANGFRISCH_CONF` to another
-path) — see `container/fangfrisch.conf` for the available sections.
+path) — see `container/fangfrisch.conf` for the available sections. Likewise, the
+local YARA engine's source list can be overridden with
+`-v ./yara-rules-sources.conf:/etc/yara-rules-sources.conf:ro` (or set
+`YARA_RULES_SOURCES`) — see `container/yara-rules-sources.conf` for the format;
+it ships with a commented YARA Forge opt-in whose mixed licenses you must accept first.
 
 ## Configuration (environment variables)
 

@@ -3,7 +3,10 @@
 # app/scanner.py). The ClamAV database is handled separately (update-signatures.sh).
 #
 # Sources are read from YARA_RULES_SOURCES (default /etc/yara-rules-sources.conf), one
-# per line:  <name>|<git-url>|<branch>|<subdir-with-.yar-files>
+# per line:  <name>|<url>|<branch>|<subdir-with-.yar-files>
+# <url> is a git repo (cloned shallowly) or, when it ends in .zip, a release asset
+# (downloaded with curl, extracted with python3 -m zipfile — e.g. YARA Forge packages,
+# which are only published as release zips, not in the git repo).
 # Only license-permitted rule sets are listed there (see the header of that file);
 # each set keeps its upstream LICENSE file next to the downloaded rules.
 #
@@ -40,23 +43,38 @@ while IFS='|' read -r name url branch subdir || [ -n "$name" ]; do
   branch="${branch:-main}"
   subdir="${subdir:-.}"
   tmp="$(mktemp -d)"
-  echo "[yara-rules] fetching $name ($url, branch $branch)..."
-  if ! git clone --depth 1 --branch "$branch" --quiet "$url" "$tmp/repo" 2>/dev/null; then
-    # configured branch may not exist (main vs master) - retry with the default branch
-    if ! git clone --depth 1 --quiet "$url" "$tmp/repo" 2>/dev/null; then
-      echo "[yara-rules] $name: clone failed (offline?) - keeping existing rules"
-      rm -rf "$tmp"
-      continue
-    fi
+  echo "[yara-rules] fetching $name ($url)..."
+  src=""
+  case "$url" in
+    *.zip)
+      # release-asset zip (e.g. YARA Forge packages): download + extract
+      if curl -fsSL --connect-timeout 15 "$url" -o "$tmp/rules.zip" 2>/dev/null \
+        && python3 -m zipfile -e "$tmp/rules.zip" "$tmp/extract" 2>/dev/null; then
+        src="$tmp/extract"
+      fi
+      ;;
+    *)
+      if git clone --depth 1 --branch "$branch" --quiet "$url" "$tmp/repo" 2>/dev/null \
+        || git clone --depth 1 --quiet "$url" "$tmp/repo" 2>/dev/null; then
+        # configured branch may not exist (main vs master) - the fallback clone above
+        # already retried with the default branch
+        src="$tmp/repo/$subdir"
+      fi
+      ;;
+  esac
+  if [ -z "$src" ] || [ ! -d "$src" ]; then
+    echo "[yara-rules] $name: no rules downloaded (offline or wrong path) - keeping existing rules"
+    rm -rf "$tmp"
+    continue
   fi
   stage="$tmp/stage"
   mkdir -p "$stage"
-  if [ -d "$tmp/repo/$subdir" ]; then
-    (cd "$tmp/repo/$subdir" && find . -type f \( -name '*.yar' -o -name '*.yara' \) \
-      -exec cp --parents {} "$stage/" \;)
-  fi
+  (cd "$src" && find . -type f \( -name '*.yar' -o -name '*.yara' \) \
+    -exec cp --parents {} "$stage/" \;)
   # keep the upstream license next to the rules (required by DRL/MIT/BSD attribution)
-  find "$tmp/repo" -maxdepth 1 -type f -iname 'LICENSE*' -exec cp {} "$stage/" \; 2>/dev/null || true
+  if [ -d "$tmp/repo" ]; then
+    find "$tmp/repo" -maxdepth 1 -type f -iname 'LICENSE*' -exec cp {} "$stage/" \; 2>/dev/null || true
+  fi
   count=$(find "$stage" -type f \( -name '*.yar' -o -name '*.yara' \) | wc -l)
   if [ "$count" -eq 0 ]; then
     echo "[yara-rules] $name: no .yar/.yara files under '$subdir' - keeping existing rules"

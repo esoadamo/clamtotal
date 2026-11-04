@@ -19,6 +19,10 @@ services:
       # securiteinfo/malwarepatrol keys) over the baked-in /etc/fangfrisch.conf; optional
       # - ./fangfrisch.conf:/etc/fangfrisch.conf:ro
       # (or point FANGFRISCH_CONF at a different path via environment below)
+      # mount your own YARA rule sources list over the baked-in one (e.g. to enable
+      # the commented yara-forge opt-in entries); optional
+      # - ./yara-rules-sources.conf:/etc/yara-rules-sources.conf:ro
+      # (or point YARA_RULES_SOURCES at a different path via environment below)
     environment:
       # set to "false" for fully airgapped operation (bake signatures into the image)
       CLAM_AUTOUPDATE: "true"

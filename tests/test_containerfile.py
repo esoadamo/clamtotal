@@ -169,8 +169,29 @@ def test_yara_rules_sources_are_license_permitted():
     assert {"reversinglabs", "signature-base", "ditekshen"} <= names
     low = conf.lower()
     assert "mit" in low and "bsd" in low and "drl" in low
-    # no Elastic License 2.0 (SaaS restriction) or other non-permissive sources
-    assert "elastic" not in low and "protections-artifacts" not in low
+    # no Elastic License 2.0 (SaaS restriction) or other non-permissive ACTIVE sources
+    # (the commented yara-forge opt-in may mention them in its license warning)
+    active = "\n".join(
+        line for line in conf.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    ).lower()
+    assert "elastic" not in active and "protections-artifacts" not in active
+
+
+def test_yara_forge_is_commented_optin_and_sources_config_is_mountable():
+    conf = (ROOT / "container" / "yara-rules-sources.conf").read_text()
+    # YARA Forge ships rules as release zips (not in the git repo) and its packages mix
+    # upstream licenses (GPL-3.0 tool, Elastic License 2.0 inside) -> documented as a
+    # commented opt-in with the license warning, not an active source
+    assert "# yara-forge-core|" in conf
+    assert "releases/latest/download/yara-forge-rules-core.zip" in conf
+    assert "Elastic License 2.0" in conf
+    # the updater supports zip release assets (curl download + python zipfile extract)
+    script = (ROOT / "scripts" / "update-yara-rules.sh").read_text()
+    assert "*.zip" in script and "zipfile" in script and "curl" in script
+    # users can override the sources list via a compose mount, same pattern as fangfrisch
+    compose = (ROOT / "compose.yaml").read_text()
+    assert "./yara-rules-sources.conf:/etc/yara-rules-sources.conf:ro" in compose
+    assert "YARA_RULES_SOURCES" in (ROOT / "README.md").read_text()
 
 
 def test_compose_persists_yara_rules():
