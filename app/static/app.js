@@ -203,8 +203,15 @@
         var s = $('hash-status'); if (s) s.textContent = 'Hashing… ' + pct + '%';
         var b = $('hash-bar'); if (b) b.style.width = pct + '%';
       }).then(function (sha256) {
-        global.fetch('/api/v2/files/' + sha256).then(function (resp) {
-          if (resp.ok) { global.location.href = '/ui/file/' + sha256; return; }
+        // Any failure here (404 = not analyzed yet, but also network errors or a
+        // transient 404 while another upload of the same file is still being
+        // processed) must fall through to the upload prompt — never leave the
+        // modal stuck on "Hashing..." with no way to proceed.
+        global.fetch('/api/v2/files/' + sha256)
+          .then(function (resp) { return resp.ok; })
+          .catch(function () { return false; })
+          .then(function (alreadyAnalyzed) {
+          if (alreadyAnalyzed) { global.location.href = '/ui/file/' + sha256; return; }
           pendingFile = { file: file, sha256: sha256 };
           openModal('Upload file?',
             'This file has <strong>not been analyzed yet</strong>.<br><br>' +

@@ -86,10 +86,12 @@ for _ in range(60):
 sys.exit("clamd did not answer PING on 127.0.0.1:3310")
 EOF
 
-# Apply database migrations (creates the tables in /data/clamtotal.db on first start)
-uv run alembic upgrade head
+# Apply database migrations (creates the tables in /data/clamtotal.db on first start).
+# Use the venv binaries directly — a uv run wrapper would try to SYNC (network) at
+# runtime; all packages are already installed in the image at build time.
+/app/.venv/bin/alembic upgrade head
 
 # 2 workers per CPU core; trust proxy headers so it works behind a Cloudflare Tunnel
 workers=$(( $(nproc) * 2 ))
-exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+exec /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
   --workers "$workers" --proxy-headers --forwarded-allow-ips='*'

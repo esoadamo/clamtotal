@@ -216,6 +216,15 @@ def test_app_version_stamped_at_build_time():
     assert "APP_VERSION" in ep and "/app/.build-version" in ep
 
 
+def test_entrypoint_uses_prebuilt_venv_no_runtime_sync():
+    # the image already contains all packages (uv sync at build); 'uv run' at runtime
+    # would try to sync from the network — use the venv binaries directly
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert "/app/.venv/bin/uvicorn" in ep
+    assert "/app/.venv/bin/alembic" in ep
+    assert "uv run" not in ep
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:
