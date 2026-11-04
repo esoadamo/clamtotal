@@ -21,7 +21,11 @@ sig_db_files() {
 }
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && ! sig_db_files; then
   echo "[bootstrap] no signature databases in /var/lib/clamav — downloading (official + unofficial)..."
-  update-signatures.sh || echo "[bootstrap] signature download failed; will retry on next start"
+  update-signatures.sh || true  # individual sources may fail offline; checked below
+  if ! sig_db_files; then
+    echo "[bootstrap] FATAL: signature download produced no database files in /var/lib/clamav; refusing to start (clamd would fail with 'No supported database files found'). Check network/DNS. Container will retry on restart." >&2
+    exit 1
+  fi
 fi
 
 # Periodic background autoupdater (freshclam + unofficial DBs).
@@ -39,6 +43,8 @@ clamd &
 
 # Wait until clamd answers an INSTREAM PING with PONG on TCP 3310 (a bare TCP
 # connect is not enough — clamd must have finished loading its databases).
+# The web UI (uvicorn below) starts ONLY after this succeeds; on timeout the
+# script exits non-zero (set -e) and the container fails to start.
 python - <<'EOF'
 import socket
 import sys

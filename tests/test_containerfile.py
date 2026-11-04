@@ -31,6 +31,8 @@ def test_entrypoint_first_launch_bootstrap():
     # bootstrap and clamd died with 'No supported database files found'
     assert ".signatures-initialized" not in ep
     assert "sig_db_files" in ep and "! sig_db_files" in ep
+    # first-init download failure must be FATAL (container refuses to start)
+    assert "refusing to start" in ep and "exit 1" in ep
 
 
 def test_scripts_resolve_fangfrisch_from_venv():
@@ -61,6 +63,10 @@ def test_entrypoint_bootstraps_signatures_before_clamd():
     ep = (ROOT / "container-entrypoint.sh").read_text()
     assert ep.index("update-signatures.sh") < ep.index("clamd &")
     assert "zPING" in ep and "PONG" in ep  # readiness = real clamd PING, not just TCP connect
+    # the web UI must start only after clamd is ready: PONG wait before uvicorn
+    assert ep.index("PONG") < ep.index("uvicorn")
+    # and the PONG wait must be fatal on timeout (set -e + non-zero exit)
+    assert 'sys.exit("clamd did not answer PING' in ep
     cf = (ROOT / "Containerfile").read_text()
     assert (
         "NotifyClamd disabled" in cf
