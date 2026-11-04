@@ -259,13 +259,7 @@ def _scan_and_store(
     return scan, False
 
 
-@app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
-    return RedirectResponse("/ui/", status_code=303)
-
-
-@app.get("/ui/", response_class=HTMLResponse)
-def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+def _render_index(request: Request, db: Session) -> HTMLResponse:
     _rate_limit(request, settings.rate_limit_browse, "browse")
     recent = (
         db.execute(select(Scan).order_by(Scan.scanned_at.desc()).limit(20)).scalars().all()
@@ -273,6 +267,16 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
         else []
     )
     return templates.TemplateResponse(request, "index.html", {"recent": recent})
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def root(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    return _render_index(request, db)
+
+
+@app.get("/ui/", response_class=HTMLResponse)
+def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    return _render_index(request, db)
 
 
 def _run_scan(data: bytes, file_name: str) -> None:

@@ -177,10 +177,13 @@ def test_search_empty_query(client):
     assert "No results found" in response.text
 
 
-def test_root_redirects_to_ui(client):
-    response = client.get("/", follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/ui/"
+def test_root_and_ui_serve_same_page(client):
+    client.post("/file/upload", files={"file": ("root.bin", b"root page")})
+    root = client.get("/")
+    ui = client.get("/ui/")
+    assert root.status_code == 200 and ui.status_code == 200  # no redirect anymore
+    assert "Analyze suspicious" in root.text and "Analyze suspicious" in ui.text
+    assert "root.bin" in root.text and "root.bin" in ui.text  # same content on both
 
 
 def test_recent_scans_hidden_when_disabled(client, monkeypatch):

@@ -31,7 +31,7 @@ Features (all fully offline, no login, no community features):
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
 - Search by MD5/SHA-1/SHA-256 or file name, sample download, forced rescan
 - Indicators are **defanged** in the UI (`hxxp://`, `[.]`) so they are never clickable/loaded; IPs preceded by `version`/`v` are not misdetected; domains require a real IANA TLD and a second-level label of >= 5 chars
-- UI is served under `/ui/` (home, file reports, search); `/` redirects there. API: `POST /file/upload`, `/api/v2/...`
+- UI is served at both `/` and `/ui/` (home, file reports, search). API: `POST /file/upload`, `/api/v2/...`
 - Minimal VT-compatible JSON API: `POST /api/v2/files` (returns `202` + `sha256` and
   scans asynchronously, or `200` with `cached: true` if the hash was already
   analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`)
