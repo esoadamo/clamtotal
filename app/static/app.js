@@ -305,10 +305,10 @@
         if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
       }
       report();
-      // upload chunks in parallel (server stores them by index, order irrelevant):
-      // sequential chunks each pay a full proxy round-trip, which is what made
-      // large chunked uploads so slow
-      return runPool(plan, 4, function (part) {
+      // send chunks one at a time: through the Cloudflare tunnel the bandwidth is
+      // shared anyway, and parallel requests only push some of them past CF's ~100s
+      // request timeout (524s) — sequential keeps every request well under it
+      return runPool(plan, 1, function (part) {
         var blob = file.slice(part.start, part.end);
         inFlight[part.index] = 0;
         report();
