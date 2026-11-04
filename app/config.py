@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_size: int = 512 * 1024 * 1024  # bytes
 
-    # auto | daemon | cli — which ClamAV backend to use
+    # auto | daemon | cli — which ClamAV backend to use ("clamd" is accepted as alias of "daemon")
     clam_mode: str = "auto"
     clamd_host: str = "127.0.0.1"
     clamd_port: int = 3310

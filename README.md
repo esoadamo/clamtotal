@@ -96,7 +96,7 @@ path) — see `container/fangfrisch.conf` for the available sections.
 | `DATABASE_URL` | `sqlite:///./clamtotal.db` | SQLAlchemy URL |
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
 | `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
-| `CLAM_MODE` | `auto` | `auto`, `daemon` (clamd), or `cli` (clamscan) |
+| `CLAM_MODE` | `auto` | `auto`, `daemon` (clamd; `clamd` also accepted), or `cli` (clamscan) |
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |

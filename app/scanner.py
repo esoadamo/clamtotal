@@ -153,19 +153,31 @@ def get_yara_scanner() -> YaraScanner | None:
     return scanner if scanner.available() else None
 
 
+_MODE_ALIASES = {
+    "clamd": "daemon",
+    "daemon": "daemon",
+    "tcp": "daemon",
+    "cli": "cli",
+    "auto": "auto",
+}
+
+
 @lru_cache(maxsize=1)
 def get_scanner() -> Scanner:
-    mode = settings.clam_mode.lower()
+    raw_mode = settings.clam_mode.lower()
+    mode = _MODE_ALIASES.get(raw_mode, "auto")  # unknown values fall back to auto, never skip clamd
     if mode in ("auto", "daemon"):
         clamd = ClamdScanner()
-        for _ in range(5):  # clamd may still be loading its databases at startup
+        # clamd may still be loading its databases at startup — wait up to ~60s for PONG.
+        # (The container entrypoint also blocks uvicorn on PONG, this covers races/restarts.)
+        for _ in range(30):
             if clamd.available():
                 return clamd
-            time.sleep(1)
+            time.sleep(2)
         if mode == "daemon":
             target = settings.clamd_socket or f"{settings.clamd_host}:{settings.clamd_port}"
             raise ScannerUnavailableError(
-                f"clamd not reachable at {target} (CLAM_MODE=daemon): "
+                f"clamd not reachable at {target} (CLAM_MODE={raw_mode}): "
                 "is clamd running and listening on TCP 3310?"
             )
     if mode in ("auto", "cli"):
@@ -175,7 +187,7 @@ def get_scanner() -> Scanner:
             raise ScannerUnavailableError(f"clamscan binary not found: {settings.clamscan_path}")
     target = settings.clamd_socket or f"{settings.clamd_host}:{settings.clamd_port}"
     raise ScannerUnavailableError(
-        f"no ClamAV backend available (CLAM_MODE={mode!r}): clamd did not answer PING at "
+        f"no ClamAV backend available (CLAM_MODE={raw_mode!r}): clamd did not answer PING at "
         f"{target} and clamscan binary not found ({settings.clamscan_path}) — "
         "run clamd (CLAM_MODE=daemon) or install clamscan (CLAM_MODE=cli)"
     )

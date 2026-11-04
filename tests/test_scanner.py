@@ -203,6 +203,25 @@ def test_get_scanner_modes(monkeypatch):
     assert isinstance(get_scanner(), ClamscanScanner)
 
 
+def test_get_scanner_clamd_alias_and_unknown_mode_fallback(monkeypatch):
+    # "clamd" is a common value users set — must behave like "daemon", not skip clamd
+    monkeypatch.setattr(settings, "clam_mode", "clamd")
+    monkeypatch.setattr(ClamdScanner, "available", lambda self: True)
+    assert isinstance(get_scanner(), ClamdScanner)
+
+    get_scanner.cache_clear()
+    monkeypatch.setattr(settings, "clam_mode", "clamd")
+    monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
+    with pytest.raises(ScannerUnavailableError, match=r"CLAM_MODE=clamd"):
+        get_scanner()
+
+    get_scanner.cache_clear()
+    # unknown mode values fall back to auto (still tries clamd first)
+    monkeypatch.setattr(settings, "clam_mode", "bogus")
+    monkeypatch.setattr(ClamdScanner, "available", lambda self: True)
+    assert isinstance(get_scanner(), ClamdScanner)
+
+
 def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
     assert YaraScanner(str(tmp_path)).available() is False
