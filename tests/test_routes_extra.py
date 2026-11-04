@@ -28,6 +28,54 @@ def test_openapi_docs_describe_current_rate_limits(client, monkeypatch):
     m.app.openapi_schema = None
 
 
+def test_startup_recovers_pending_scans():
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.db import Base, SessionLocal, engine
+    from app.main import app
+    from app.models import Scan
+
+    Base.metadata.create_all(engine)
+    content = b"pending recovery sample"
+    sha = hashlib.sha256(content).hexdigest()
+    sha_gone = "c" * 64
+    with SessionLocal() as db:
+        for s in (sha, sha_gone):
+            db.add(
+                Scan(
+                    sha256=s,
+                    md5="4" * 32,
+                    sha1="4" * 40,
+                    file_name=f"{s[:6]}.bin",
+                    size=len(content),
+                    file_type="data",
+                    magic_hex="",
+                    verdict="pending",
+                    status="pending",
+                    engine="pending",
+                    urls=[],
+                )
+            )
+        db.commit()
+    Path(settings.upload_dir, sha).write_bytes(content)  # stored sample exists
+    # sha_gone has no file on disk -> row must be deleted on startup
+
+    with TestClient(app):  # entering the client runs the lifespan -> recovery
+        for _ in range(50):
+            with SessionLocal() as db:
+                row = db.get(Scan, sha)
+                gone = db.get(Scan, sha_gone)
+                if row and row.status == "done" and gone is None:
+                    break
+            time.sleep(0.1)
+    with SessionLocal() as db:
+        row = db.get(Scan, sha)
+        assert row is not None and row.status == "done"  # re-scanned from the stored file
+        assert db.get(Scan, sha_gone) is None  # deleted: file was gone
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 

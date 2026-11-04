@@ -34,8 +34,26 @@ from app.models import Scan
 from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
 
 
+def _recover_pending_scans() -> None:
+    """Startup recovery: scans left in 'pending' by a restart are re-run if the
+    stored sample still exists, or their DB row is deleted if it was pruned."""
+    with SessionLocal() as db:
+        pending = db.execute(select(Scan).where(Scan.status == "pending")).scalars().all()
+        for scan in pending:
+            stored = Path(settings.upload_dir) / scan.sha256
+            if stored.exists():
+                threading.Thread(
+                    target=_run_scan, args=(stored.read_bytes(), scan.file_name), daemon=True
+                ).start()
+            else:
+                db.delete(scan)
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    _recover_pending_scans()
+
     def loop() -> None:
         while True:
             _prune_uploads()
