@@ -24,6 +24,7 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `app/analysis.py` — hashing (MD5/SHA-1/SHA-256/SHA-512/CRC32), IOC extraction (URLs, domains, IPs, emails, registry keys, BTC), PE/ELF/PDF/Office parsing, suspicious strings, archive extraction
 - `app/rules/` — bundled original public YARA rules (mounted at `/rules` in the container)
 - `scripts/update-signatures.sh`, `container/fangfrisch.conf` — official (freshclam) + unofficial (SaneSecurity via fangfrisch, which includes YARA rules) signature updates; `CLAM_AUTOUPDATE=false` for airgapped. (extremeshok/clamav-unofficial-sigs was dropped: the repo no longer ships signature files.) Build context is restricted by `.containerignore` so no secrets enter the image
+- `scripts/update-yara-rules.sh`, `container/yara-rules-sources.conf` — auto-update of license-permitted third-party YARA rule sets (MIT/BSD-2-Clause/DRL-1.1 only) into `/rules/third_party/` for the local YARA engine; runs at bootstrap + on the `CLAM_UPDATE_INTERVAL` loop, gated on `CLAM_AUTOUPDATE` like the ClamAV updates, touches `.rules-stamp` so `YaraScanner` hot-reloads. `YaraScanner` compiles rule files individually and skips broken ones (duplicate rule names across sets must not break the engine)
 - `app/templates/` — UI pages (`base`, `index`, `report`, `search`, `not_found`)
 - `app/static/app.js` — all frontend JS (exports pure functions on `window.ClamTotal`); tested by `node --test tests/js/app.test.mjs`
 - `tests/test_frontend.py` — asserts the rendered HTML matches the DOM contract app.js expects

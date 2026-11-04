@@ -75,7 +75,11 @@ with a valid database.
 
 By default, ClamAV signatures are **downloaded on first container launch** (not at build
 time) and refreshed every 6 hours at runtime (`update-signatures.sh`: `freshclam` + fangfrisch/SaneSecurity, which
-ships YARA rules clamd loads natively). For a fully airgapped deployment:
+ships YARA rules clamd loads natively). The **local YARA engine** additionally pulls
+license-permitted third-party rule sets (ReversingLabs MIT, signature-base DRL-1.1,
+ditekshen BSD-2 — see `container/yara-rules-sources.conf`) into `/rules/third_party/`
+on first launch and on the same 6-hour loop (`scripts/update-yara-rules.sh`); the app
+hot-reloads them without a restart. For a fully airgapped deployment:
 
 ```sh
 podman build --build-arg AIRGAPPED=true -t clamtotal .  # signatures baked in at BUILD time
@@ -84,7 +88,9 @@ podman run -e CLAM_AUTOUPDATE=false -v ./my-signatures:/var/lib/clamav:ro \
 ```
 
 Public YARA rules can be mounted at `/rules` (`YARA_RULES_DIR=/rules`); a small
-original ruleset is bundled in `app/rules/public.yar`. To customize the unofficial
+original ruleset is bundled in `app/rules/public.yar`. Third-party YARA rule updates
+are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=false` (or bake them
+into the image with `--build-arg AIRGAPPED=true`). To customize the unofficial
 signature sources (fangfrisch), mount your own config over the baked-in one:
 `-v ./fangfrisch.conf:/etc/fangfrisch.conf:ro` (or set `FANGFRISCH_CONF` to another
 path) — see `container/fangfrisch.conf` for the available sections.
@@ -100,7 +106,8 @@ path) — see `container/fangfrisch.conf` for the available sections.
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |
-| `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`) |
+| `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
+| `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
