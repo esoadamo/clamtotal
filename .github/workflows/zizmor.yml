@@ -1,13 +1,11 @@
 name: zizmor
 
-# security audit of the GitHub Actions workflows themselves — runs whenever
-# CI config changes, on any PR touching workflows, and on manual dispatch
+# security audit of the GitHub Actions workflows — same triggers as the tests
+# workflow (every push to main, every PR), plus manual dispatch
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/**"]
   pull_request:
-    paths: [".github/workflows/**"]
   workflow_dispatch:
 
 permissions:

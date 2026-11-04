@@ -101,11 +101,13 @@ def test_github_actions_pinned_by_sha():
                 )
 
 
-def test_zizmor_workflow_runs_on_ci_changes_and_dispatch():
+def test_zizmor_workflow_runs_like_tests_and_on_dispatch():
+    # same triggers as tests.yml: every push to main and every PR (no paths filter)
     wf = ROOT / ".github" / "workflows" / "zizmor.yml"
     t = wf.read_text()
     assert "workflow_dispatch:" in t
-    assert 'paths: [".github/workflows/**"]' in t
+    assert "paths:" not in t
+    assert "branches: [main]" in t and "pull_request:" in t
     assert "zizmorcore/zizmor@" in t
     assert "persist-credentials: false" in t
 

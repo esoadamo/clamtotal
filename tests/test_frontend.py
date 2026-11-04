@@ -171,10 +171,11 @@ def test_plausible_script_optional(client, monkeypatch):
         assert '<script defer src="https://plausible.example/js/script.js"></script>' in page, path
 
 
-def test_footer_links_to_github_repo(client):
+def test_footer_links_to_github_repo_and_api_docs(client):
     for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
         page = client.get(path).text
         assert 'href="https://github.com/esoadamo/clamtotal"' in page, path
+        assert 'href="/docs"' in page, path  # link to the API docs (Swagger UI)
 
 
 def test_mobile_viewport_and_media_query_on_all_pages(client):
