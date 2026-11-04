@@ -109,6 +109,16 @@ def test_zizmor_is_own_job_in_tests_workflow():
     t = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
     assert "  zizmor:\n" in t
     assert "uvx zizmor==1.32.0 --offline .github/workflows/" in t
+    # the container image must not build unless zizmor passes too
+    assert "needs: [test, zizmor, sast, sca]" in t
+
+
+def test_compose_persists_clamav_signature_db():
+    # /var/lib/clamav must be a volume, otherwise a restart loses the downloaded
+    # signatures and clamd fails with 'No supported database files found'
+    compose = (ROOT / "compose.yaml").read_text()
+    assert "clamav-db:/var/lib/clamav" in compose
+    assert "clamav-db:" in compose.split("volumes:")[1]
 
 
 def test_containerignore_present_and_covers_secrets():

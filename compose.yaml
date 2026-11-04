@@ -7,6 +7,9 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - clamtotal-data:/data
+      # persist downloaded ClamAV signature databases across container restarts,
+      # so clamd always finds a valid DB in /var/lib/clamav on start
+      - clamav-db:/var/lib/clamav
       # mount your own public YARA rules here (read-only); optional
       # - ./rules:/rules:ro
       # mount your own fangfrisch config (unofficial signature sources, e.g. enable
@@ -20,3 +23,4 @@ services:
 
 volumes:
   clamtotal-data:
+  clamav-db:

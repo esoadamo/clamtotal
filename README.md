@@ -65,9 +65,13 @@ On every push to `main` where all tests pass, CI builds and publishes the image 
 ```sh
 podman build -t clamtotal .
 # 2 workers per CPU core, trusts proxy headers (works behind a Cloudflare Tunnel)
-podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal
+podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data -v clamav-db:/var/lib/clamav clamtotal
 # or: podman compose up
 ```
+
+`/var/lib/clamav` (the downloaded ClamAV signature databases) is a named volume in
+`compose.yaml`, so container restarts keep the signatures and clamd always starts
+with a valid database.
 
 By default, ClamAV signatures are **downloaded on first container launch** (not at build
 time) and refreshed every 6 hours at runtime (`update-signatures.sh`: `freshclam` + fangfrisch/SaneSecurity, which

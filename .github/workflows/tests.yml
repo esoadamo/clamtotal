@@ -102,7 +102,7 @@ jobs:
 
   build-image:
     name: Build and publish container image
-    needs: [test, sast, sca]
+    needs: [test, zizmor, sast, sca]  # image builds only when ALL checks pass, incl. the zizmor audit
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
