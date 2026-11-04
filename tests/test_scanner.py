@@ -57,7 +57,8 @@ def clear_caches(monkeypatch):
 
 
 def test_clamd_tcp_clean(monkeypatch):
-    fake = FakeSocket(b"stream: OK\n")
+    # real clamd z-command responses are NUL-terminated ("stream: OK\x00")
+    fake = FakeSocket(b"stream: OK\x00")
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
     result = ClamdScanner().scan(b"data")
     assert result.verdict == "clean" and result.signature is None
@@ -65,14 +66,22 @@ def test_clamd_tcp_clean(monkeypatch):
 
 
 def test_clamd_tcp_infected(monkeypatch):
-    fake = FakeSocket(b"stream: Win.Test.EICAR_HDB-1 FOUND\n")
+    fake = FakeSocket(b"stream: Win.Test.EICAR_HDB-1 FOUND\x00")
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
     result = ClamdScanner().scan(b"data")
     assert result.verdict == "infected" and result.signature == "Win.Test.EICAR_HDB-1"
 
 
+def test_clamd_newline_terminated_response_also_accepted(monkeypatch):
+    monkeypatch.setattr(
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"stream: OK\n")
+    )
+    result = ClamdScanner().scan(b"data")
+    assert result.verdict == "clean"
+
+
 def test_clamd_unexpected_response(monkeypatch):
-    fake = FakeSocket(b"INSTREAM size limit exceeded\n")
+    fake = FakeSocket(b"INSTREAM size limit exceeded\x00")
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
     with pytest.raises(ScannerUnavailableError):
         ClamdScanner().scan(b"data")
@@ -81,7 +90,7 @@ def test_clamd_unexpected_response(monkeypatch):
 def test_clamd_available_and_unavailable(monkeypatch):
     # available() does a real INSTREAM PING and requires PONG
     monkeypatch.setattr(
-        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"PONG\n")
+        socket, "create_connection", lambda addr, timeout=None: FakeSocket(b"PONG\x00")
     )
     assert ClamdScanner().available() is True
     monkeypatch.setattr(

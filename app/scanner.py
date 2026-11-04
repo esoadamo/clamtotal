@@ -57,7 +57,7 @@ class ClamdScanner:
             with self._connect() as sock:
                 sock.sendall(b"zPING\0")
                 response = b""
-                while b"\n" not in response:
+                while b"\n" not in response and b"\x00" not in response:
                     part = sock.recv(64)
                     if not part:
                         break
@@ -74,12 +74,14 @@ class ClamdScanner:
                 sock.sendall(struct.pack(">I", len(chunk)) + chunk)
             sock.sendall(struct.pack(">I", 0))
             response = b""
-            while b"\n" not in response:
+            # z-commands NUL-terminate responses ("stream: OK\0"), plain ones use \n
+            while b"\n" not in response and b"\x00" not in response:
                 part = sock.recv(4096)
                 if not part:
                     break
                 response += part
-        text = response.decode(errors="replace").strip()
+        # strip NUL terminators from z-command responses before parsing
+        text = response.decode(errors="replace").replace("\x00", "").strip()
         if text.endswith("OK"):
             return ScanResult("clean", None, self.engine, text)
         match = re.match(r"stream:\s+(.+?)\s+FOUND", text)
