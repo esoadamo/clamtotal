@@ -193,3 +193,22 @@ test('chunkProgressPct reports overall file percentage across chunks', () => {
   assert.equal(CT.chunkProgressPct(size, chunk, size), 100);      // clamped
   assert.equal(CT.chunkProgressPct(0, 0, 0), 100);                // empty file
 });
+
+test('runPool runs with bounded concurrency and ordered results', async () => {
+  let active = 0, maxActive = 0;
+  const items = Array.from({ length: 10 }, (_, i) => i);
+  const results = await CT.runPool(items, 4, async (x) => {
+    active++; maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 5));
+    active--;
+    return x * 10;
+  });
+  assert.deepEqual(results, items.map((x) => x * 10)); // order preserved
+  assert.ok(maxActive <= 4, `concurrency ${maxActive} exceeded 4`);
+  assert.ok(maxActive >= 2, 'should actually parallelize');
+});
+
+test('runPool handles empty input and concurrency > length', async () => {
+  assert.deepEqual(await CT.runPool([], 4, async (x) => x), []);
+  assert.deepEqual(await CT.runPool([1, 2], 10, async (x) => x + 1), [2, 3]);
+});

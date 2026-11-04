@@ -174,6 +174,30 @@
     return Math.min(100, Math.round(((doneBytes + inFlightBytes) / size) * 100));
   }
 
+  /* Run async fn over items with at most `concurrency` in flight (ordered results).
+     Used to upload chunks in parallel — the server stores them by index, so order
+     does not matter, and parallel requests cut total wall time several-fold. */
+  function runPool(items, concurrency, fn) {
+    var results = new Array(items.length);
+    var next = 0;
+    var workers = [];
+    var n = Math.max(1, Math.min(concurrency, items.length));
+    function worker() {
+      return new Promise(function (resolve, reject) {
+        (function step() {
+          var i = next++;
+          if (i >= items.length) return resolve();
+          Promise.resolve(fn(items[i], i)).then(function (r) {
+            results[i] = r;
+            step();
+          }, reject);
+        })();
+      });
+    }
+    for (var w = 0; w < n; w++) workers.push(worker());
+    return Promise.all(workers).then(function () { return results; });
+  }
+
   function defang(value) {
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
@@ -259,40 +283,42 @@
       var plan = chunkPlan(file.size, chunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
       var total = plan.length;
-      var doneBytes = 0; // bytes fully uploaded so far (sum of finished chunk sizes)
-      function report(frac) {
-        // one overall percentage for the whole file, not per-chunk counts
-        var pct = chunkProgressPct(doneBytes, frac || 0, file.size);
+      var doneBytes = 0;         // bytes fully uploaded
+      var inFlight = {};         // part.index -> bytes sent so far of that chunk
+      function report() {
+        var flying = Object.keys(inFlight).reduce(function (n, k) { return n + inFlight[k]; }, 0);
+        var pct = chunkProgressPct(doneBytes, flying, file.size);
         if (bar) bar.style.width = pct + '%';
         if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
       }
-      report(0);
-      var chain = Promise.resolve();
-      plan.forEach(function (part) {
-        chain = chain.then(function () {
-          report(0);
-          var blob = file.slice(part.start, part.end);
-          return postChunk('/file/upload/chunk', {
-            sha256: sha256, index: String(part.index), total: String(total), name: file.name,
-          }, blob, function (frac) {
-            report((part.end - part.start) * frac); // frac (0..1) of this chunk, in bytes
-          }).then(function (res) {
-            doneBytes += part.end - part.start;
-            report(0);
-            if (res.status === 200 || res.status === 202) {
-              var body = {};
-              try { body = JSON.parse(res.body); } catch (e) { /* keep {} */ }
-              if (body.sha256) return res; // final chunk: server assembled + queued the scan
-              if (body.status === 'chunk_stored') return res;
-              showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
-              throw new Error('chunk rejected');
-            }
+      report();
+      // upload chunks in parallel (server stores them by index, order irrelevant):
+      // sequential chunks each pay a full proxy round-trip, which is what made
+      // large chunked uploads so slow
+      return runPool(plan, 4, function (part) {
+        var blob = file.slice(part.start, part.end);
+        inFlight[part.index] = 0;
+        report();
+        return postChunk('/file/upload/chunk', {
+          sha256: sha256, index: String(part.index), total: String(total), name: file.name,
+        }, blob, function (frac) {
+          inFlight[part.index] = (part.end - part.start) * frac;
+          report();
+        }).then(function (res) {
+          doneBytes += part.end - part.start;
+          delete inFlight[part.index];
+          report();
+          if (res.status === 200 || res.status === 202) {
+            var body = {};
+            try { body = JSON.parse(res.body); } catch (e) { /* keep {} */ }
+            if (body.sha256 || body.status === 'chunk_stored') return res;
             showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
-            throw new Error('chunk failed');
-          });
+            throw new Error('chunk rejected');
+          }
+          showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
+          throw new Error('chunk failed');
         });
-      });
-      return chain.then(function (res) { global.location.href = '/ui/file/' + sha256; })
+      }).then(function () { global.location.href = '/ui/file/' + sha256; })
         .catch(function () { /* error already shown */ });
     }
 
@@ -391,6 +417,7 @@
     chunkPlan: chunkPlan,
     shouldUseChunks: shouldUseChunks,
     chunkProgressPct: chunkProgressPct,
+    runPool: runPool,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
     defang: defang,
     openModal: openModal,
