@@ -55,6 +55,14 @@ def test_fangfrisch_db_not_inside_clamav_dbdir():
     assert "mkdir -p /var/lib/fangfrisch" in cf  # dir must exist before fangfrisch initdb
     ep = (ROOT / "container-entrypoint.sh").read_text()
     assert "rm -f /var/lib/clamav/fangfrisch.db" in ep  # self-heal broken containers
+    prefixes = re.findall(r"^\s*prefix\s*=\s*(\S+)", conf, re.M)
+    assert prefixes and all("sanesecurity.net" not in p for p in prefixes)  # dead host
+    assert any("mirror.seichter.de/sanesecurity" in p for p in prefixes)  # current upstream mirror
+
+
+def test_entrypoint_runs_alembic_migrations():
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert "alembic upgrade head" in ep  # otherwise the container starts with no tables
 
 
 def test_clamd_uses_tcp_only_no_local_socket():

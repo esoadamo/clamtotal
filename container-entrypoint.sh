@@ -45,6 +45,9 @@ for _ in range(60):
 sys.exit("clamd did not start listening on 127.0.0.1:3310")
 EOF
 
+# Apply database migrations (creates the tables in /data/clamtotal.db on first start)
+uv run alembic upgrade head
+
 # 2 workers per CPU core; trust proxy headers so it works behind a Cloudflare Tunnel
 workers=$(( $(nproc) * 2 ))
 exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 \
