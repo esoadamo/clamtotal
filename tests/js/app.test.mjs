@@ -181,3 +181,15 @@ test('shouldUseChunks gates the chunked path', () => {
   assert.equal(CT.shouldUseChunks(10 * 1024 * 1024, 25 * 1024 * 1024), false);
   assert.equal(CT.shouldUseChunks(300 * 1024 * 1024, 0), false);  // disabled
 });
+
+test('chunkProgressPct reports overall file percentage across chunks', () => {
+  const size = 300 * 1024 * 1024;
+  const chunk = 25 * 1024 * 1024;
+  assert.equal(CT.chunkProgressPct(0, 0, size), 0);
+  assert.equal(CT.chunkProgressPct(0, chunk / 2, size), 4);       // half of chunk 0
+  assert.equal(CT.chunkProgressPct(chunk, 0, size), 8);           // chunk 0 done
+  assert.equal(CT.chunkProgressPct(chunk, chunk / 2, size), 13);  // chunk 1 halfway
+  assert.equal(CT.chunkProgressPct(size, 0, size), 100);
+  assert.equal(CT.chunkProgressPct(size, chunk, size), 100);      // clamped
+  assert.equal(CT.chunkProgressPct(0, 0, 0), 100);                // empty file
+});

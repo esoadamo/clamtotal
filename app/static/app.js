@@ -167,6 +167,13 @@
     return chunkSize > 0 && fileSize > chunkSize;
   }
 
+  /* Overall upload percentage across all chunks: (bytes finished + bytes in
+     flight) / total file size. */
+  function chunkProgressPct(doneBytes, inFlightBytes, size) {
+    if (!size) return 100;
+    return Math.min(100, Math.round(((doneBytes + inFlightBytes) / size) * 100));
+  }
+
   function defang(value) {
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
@@ -252,23 +259,26 @@
       var plan = chunkPlan(file.size, chunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
       var total = plan.length;
-      var done = 0;
-      function report() {
-        if (bar) bar.style.width = Math.round((done / total) * 100) + '%';
-        if (status) status.textContent = 'Uploading ' + file.name + '… chunk ' + (done + 1) + '/' + total;
+      var doneBytes = 0; // bytes fully uploaded so far (sum of finished chunk sizes)
+      function report(frac) {
+        // one overall percentage for the whole file, not per-chunk counts
+        var pct = chunkProgressPct(doneBytes, frac || 0, file.size);
+        if (bar) bar.style.width = pct + '%';
+        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
       }
-      report();
+      report(0);
       var chain = Promise.resolve();
       plan.forEach(function (part) {
         chain = chain.then(function () {
-          report();
+          report(0);
           var blob = file.slice(part.start, part.end);
           return postChunk('/file/upload/chunk', {
             sha256: sha256, index: String(part.index), total: String(total), name: file.name,
           }, blob, function (frac) {
-            if (bar) bar.style.width = Math.round(((done + frac) / total) * 100) + '%';
+            report((part.end - part.start) * frac); // frac (0..1) of this chunk, in bytes
           }).then(function (res) {
-            done++;
+            doneBytes += part.end - part.start;
+            report(0);
             if (res.status === 200 || res.status === 202) {
               var body = {};
               try { body = JSON.parse(res.body); } catch (e) { /* keep {} */ }
@@ -380,6 +390,7 @@
     hashFileWithProgress: hashFileWithProgress,
     chunkPlan: chunkPlan,
     shouldUseChunks: shouldUseChunks,
+    chunkProgressPct: chunkProgressPct,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
     defang: defang,
     openModal: openModal,
