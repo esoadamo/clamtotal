@@ -132,6 +132,54 @@ def test_compose_persists_clamav_signature_db():
     assert "clamav-db:" in compose.split("volumes:")[1]
 
 
+def test_yara_rules_autoupdate_wiring():
+    cf = (ROOT / "Containerfile").read_text()
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    script = (ROOT / "scripts" / "update-yara-rules.sh").read_text()
+    assert (ROOT / "scripts" / "update-yara-rules.sh").exists()
+    assert (ROOT / "container" / "yara-rules-sources.conf").exists()
+    # script + sources config are baked into the image and the script is executable
+    assert "COPY scripts/update-yara-rules.sh" in cf
+    assert "COPY container/yara-rules-sources.conf" in cf
+    assert "chmod +x" in cf and "update-yara-rules.sh" in cf.split("chmod +x")[1].split("\n")[0]
+    # bundled rules are copied recursively so app/rules/ subdirs land in /rules too
+    assert "cp -r /app/app/rules/. /rules/" in cf
+    # entrypoint: bootstrap + periodic loop, gated on CLAM_AUTOUPDATE like the ClamAV updates
+    assert ep.count("update-yara-rules.sh") >= 2
+    assert "CLAM_AUTOUPDATE" in ep
+    # the update script touches the stamp file so the app hot-reloads rules
+    assert ".rules-stamp" in script
+    # airgapped builds bake third-party YARA rules at build time too
+    assert re.search(r'AIRGAPPED" = "true" \]; then .*update-yara-rules\.sh', cf, re.S)
+
+
+def test_yara_rules_sources_are_license_permitted():
+    conf = (ROOT / "container" / "yara-rules-sources.conf").read_text()
+    entries = [
+        line.split("|")
+        for line in conf.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert len(entries) >= 3
+    names = set()
+    for name, url, branch, subdir in entries:
+        assert name and url.startswith("https://github.com/") and branch and subdir
+        names.add(name)
+    # verified permissive licenses: MIT (ReversingLabs), DRL 1.1 (signature-base), BSD-2 (ditekshen)
+    assert {"reversinglabs", "signature-base", "ditekshen"} <= names
+    low = conf.lower()
+    assert "mit" in low and "bsd" in low and "drl" in low
+    # no Elastic License 2.0 (SaaS restriction) or other non-permissive sources
+    assert "elastic" not in low and "protections-artifacts" not in low
+
+
+def test_compose_persists_yara_rules():
+    # /rules must be a volume so auto-downloaded third-party rules survive restarts
+    compose = (ROOT / "compose.yaml").read_text()
+    assert "yara-rules:/rules" in compose
+    assert "yara-rules:" in compose.split("volumes:")[1]
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:

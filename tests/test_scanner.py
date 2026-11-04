@@ -249,6 +249,33 @@ def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):
     assert get_yara_scanner() is None
 
 
+def test_yara_scanner_skips_broken_files_and_allows_duplicate_rule_names(tmp_path):
+    (tmp_path / "broken.yar").write_text("rule Broken { condition: }")  # invalid syntax
+    (tmp_path / "a.yar").write_text("rule Same { condition: true }")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+    assert scanner.available() is True  # broken file skipped, valid ones compiled
+    assert scanner.scan(b"x") == ["Same"]
+
+
+def test_yara_scanner_hot_reloads_on_stamp_change(tmp_path):
+    (tmp_path / "a.yar").write_text("rule R1 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+    assert scanner.scan(b"x") == ["R1"]
+    # new rule file without a stamp change is NOT picked up yet
+    (tmp_path / "b.yar").write_text("rule R2 { condition: true }")
+    assert scanner.scan(b"x") == ["R1"]
+    # update-yara-rules.sh touches .rules-stamp -> recompile on next scan
+    stamp = tmp_path / ".rules-stamp"
+    stamp.touch()
+    assert scanner.scan(b"x") == ["R1", "R2"]
+    # stamp removed (e.g. rules dir replaced) -> recompile as well
+    stamp.unlink()
+    (tmp_path / "c.yar").write_text("rule R3 { condition: true }")
+    assert scanner.scan(b"x") == ["R1", "R2", "R3"]
+
+
 def test_struct_import_used():
     assert struct.pack(">I", 1) == b"\x00\x00\x00\x01"
     assert scanner_module.struct is struct

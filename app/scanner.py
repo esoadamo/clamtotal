@@ -125,26 +125,55 @@ class ClamscanScanner:
 
 
 class YaraScanner:
-    """Second engine: local YARA rules (yara-python). Fully offline, public rules only."""
+    """Second engine: local YARA rules (yara-python). Fully offline, public rules only.
+
+    Rule files are compiled individually so duplicate rule names across third-party
+    rule sets (or a single broken file) cannot break the whole engine — broken files
+    are skipped. When scripts/update-yara-rules.sh refreshes rules it touches a
+    .rules-stamp file in the rules dir; the scanner recompiles on the next scan when
+    the stamp changes, so rule updates apply without an app restart.
+    """
 
     engine = "YARA (local rules)"
 
     def __init__(self, rules_dir: str) -> None:
-        self._rules = None
+        self._rules_dir = rules_dir
+        self._stamp_path = Path(rules_dir) / ".rules-stamp"
+        self._rules: list = []
+        self._stamp: int | None = None
+        self._load()
+
+    def _load(self) -> None:
+        self._rules = []
         files = sorted(
-            p for p in Path(rules_dir).glob("**/*") if p.suffix in (".yar", ".yara") and p.is_file()
+            p
+            for p in Path(self._rules_dir).glob("**/*")
+            if p.suffix in (".yar", ".yara") and p.is_file()
         )
-        if files:
-            sources = {f"rule_{i}": f.read_text(encoding="utf-8") for i, f in enumerate(files)}
-            self._rules = yara.compile(sources=sources)
+        for f in files:
+            try:
+                self._rules.append(yara.compile(filepath=str(f)))
+            except yara.Error:
+                continue
+        try:
+            self._stamp = self._stamp_path.stat().st_mtime_ns
+        except OSError:
+            self._stamp = None
 
     def available(self) -> bool:
-        return self._rules is not None
+        return bool(self._rules)
+
+    def _reload_if_stamped(self) -> None:
+        try:
+            stamp = self._stamp_path.stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        if stamp != self._stamp:
+            self._load()
 
     def scan(self, data: bytes) -> list[str]:
-        if self._rules is None:
-            return []
-        return sorted({m.rule for m in self._rules.match(data=data)})
+        self._reload_if_stamped()
+        return sorted({m.rule for rules in self._rules for m in rules.match(data=data)})
 
 
 @lru_cache(maxsize=1)

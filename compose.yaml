@@ -10,7 +10,10 @@ services:
       # persist downloaded ClamAV signature databases across container restarts,
       # so clamd always finds a valid DB in /var/lib/clamav on start
       - clamav-db:/var/lib/clamav
-      # mount your own public YARA rules here (read-only); optional
+      # persist auto-downloaded third-party YARA rules (/rules/third_party)
+      # across container restarts; the bundled rules are copied in on first use
+      - yara-rules:/rules
+      # mount your own public YARA rules here instead (read-only); optional
       # - ./rules:/rules:ro
       # mount your own fangfrisch config (unofficial signature sources, e.g. enable
       # securiteinfo/malwarepatrol keys) over the baked-in /etc/fangfrisch.conf; optional
@@ -24,3 +27,4 @@ services:
 volumes:
   clamtotal-data:
   clamav-db:
+  yara-rules:

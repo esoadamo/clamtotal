@@ -28,13 +28,22 @@ if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && ! sig_db_files; then
   fi
 fi
 
-# Periodic background autoupdater (freshclam + unofficial DBs).
+# Third-party YARA rule sets for the local YARA engine (license-permitted sources
+# from /etc/yara-rules-sources.conf -> /rules/third_party). Non-fatal: the bundled
+# rules in /rules always work. Skipped when CLAM_AUTOUPDATE=false (airgapped).
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && [ ! -d /rules/third_party ]; then
+  echo "[bootstrap] no third-party YARA rules in /rules/third_party - downloading..."
+  update-yara-rules.sh || echo "[bootstrap] yara rule download failed (offline?) - bundled rules still active"
+fi
+
+# Periodic background autoupdater (freshclam + unofficial DBs + third-party YARA rules).
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   (
     interval="${CLAM_UPDATE_INTERVAL:-21600}"  # 6h
     while true; do
       sleep "$interval"
       update-signatures.sh || echo "[autoupdate] update failed; will retry next cycle"
+      update-yara-rules.sh || echo "[autoupdate] yara rules update failed; will retry next cycle"
     done
   ) &
 fi

@@ -36,14 +36,18 @@ RUN uv sync --frozen --no-dev --no-install-project --group signatures
 # Unofficial signature DBs (SaneSecurity etc., includes YARA rules) via fangfrisch.
 COPY container/fangfrisch.conf /etc/fangfrisch.conf
 COPY scripts/update-signatures.sh /usr/local/bin/
+# Third-party YARA rule sets for the local YARA engine (license-permitted sources only).
+COPY scripts/update-yara-rules.sh /usr/local/bin/
+COPY container/yara-rules-sources.conf /etc/yara-rules-sources.conf
 # fangfrisch is installed in the uv venv, not on PATH — call it via the venv binary.
 # Signature semantics: by default NOTHING is downloaded at build time (signatures are
 # fetched on first container launch, see container-entrypoint.sh). AIRGAPPED=true bakes
 # signatures into the image at build time instead.
-RUN chmod +x /usr/local/bin/update-signatures.sh \
+RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-yara-rules.sh \
     && mkdir -p /var/lib/fangfrisch \
     && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
     && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
+         YARA_RULES_DIR=/rules update-yara-rules.sh || true; \
          else echo "default build: signatures are downloaded on first container launch"; fi
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).
@@ -58,8 +62,10 @@ RUN sed -i \
     && { grep -q '^TCPSocket 3310' /etc/clamav/clamd.conf || echo 'TCPSocket 3310' >> /etc/clamav/clamd.conf; } \
     && { grep -q '^TCPAddr 0.0.0.0' /etc/clamav/clamd.conf || echo 'TCPAddr 0.0.0.0' >> /etc/clamav/clamd.conf; }
 
-# Bundled public YARA rules; mount your own public rules over /rules.
-RUN mkdir -p /rules && cp /app/app/rules/*.yar /rules/
+# Bundled public YARA rules (recursive, so app/rules/ subdirs work too); mount your
+# own public rules over /rules. Auto-downloaded third-party rules land in
+# /rules/third_party at container start (CLAM_AUTOUPDATE=true).
+RUN mkdir -p /rules && cp -r /app/app/rules/. /rules/
 
 COPY container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
 RUN chmod +x /usr/local/bin/container-entrypoint.sh
