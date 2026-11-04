@@ -18,7 +18,10 @@ if [ -z "$FANGFRISCH_BIN" ] && [ -x /app/.venv/bin/fangfrisch ]; then
 fi
 if [ -n "$FANGFRISCH_BIN" ] && [ -f "$FANGFRISCH_CONF" ]; then
   echo "[signatures] refreshing unofficial DBs via fangfrisch..."
-  "$FANGFRISCH_BIN" --conf "$FANGFRISCH_CONF" refresh || echo "[signatures] fangfrisch refresh failed (offline?) — keeping existing unofficial DBs"
+  if ! "$FANGFRISCH_BIN" --conf "$FANGFRISCH_CONF" refresh >/tmp/fangfrisch.log 2>&1; then
+    echo "[signatures] fangfrisch refresh failed (offline?) — keeping existing unofficial DBs. Last error:"
+    tail -n 1 /tmp/fangfrisch.log
+  fi
 fi
 
 # extremeshok/clamav-unofficial-sigs (public community signature set)

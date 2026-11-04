@@ -34,6 +34,16 @@ def test_scripts_resolve_fangfrisch_from_venv():
     assert "/app/.venv/bin/fangfrisch" in s
 
 
+def test_signature_scripts_fail_gracefully_offline():
+    # no-DNS environments: keep existing signatures, print one line, no stack trace
+    s = (ROOT / "scripts/update-signatures.sh").read_text()
+    assert "fangfrisch refresh failed (offline?)" in s
+    assert "tail -n 1 /tmp/fangfrisch.log" in s
+    u = (ROOT / "scripts/update-unofficial-sigs.sh").read_text()
+    assert "clone failed (offline?)" in u
+    assert "exit 0" in u
+
+
 def test_fangfrisch_db_not_inside_clamav_dbdir():
     # clamd loads every file in /var/lib/clamav as a signature DB; a sqlite fangfrisch.db
     # there makes clamd fail with "Malformed database" and the container never starts

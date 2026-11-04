@@ -9,7 +9,11 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "[unofficial-sigs] cloning extremeshok/clamav-unofficial-sigs..."
-git clone --depth 1 https://github.com/extremeshok/clamav-unofficial-sigs "$WORK/sigs"
+if ! git clone --depth 1 https://github.com/extremeshok/clamav-unofficial-sigs "$WORK/sigs" 2>/tmp/clone.log; then
+  echo "[unofficial-sigs] clone failed (offline?) — keeping existing sigs. Last error:"
+  tail -n 1 /tmp/clone.log
+  exit 0
+fi
 
 count=0
 for f in "$WORK"/sigs/sigs/*; do
