@@ -152,12 +152,23 @@ def favicon() -> Response:
 
 
 def _prune_uploads() -> None:
-    """Delete stored samples past their TTL. ttl=-1 keeps them forever, 0 deletes immediately."""
+    """Delete stored samples past their TTL (ttl=-1 keeps them forever, 0 deletes
+    immediately) and always remove stale partial chunked uploads: a chunk dir is
+    temporary by design — if the client disconnects or never sends the last chunk,
+    the whole .chunks/<sha256>/ dir is deleted after 1h."""
+    now = time.time()
+    upload_dir = Path(settings.upload_dir)
+    if not upload_dir.is_dir():
+        return
+    chunks_root = upload_dir / ".chunks"
+    if chunks_root.is_dir():
+        for chunk_dir in chunks_root.iterdir():
+            if chunk_dir.is_dir() and now - chunk_dir.stat().st_mtime > 3600:
+                shutil.rmtree(chunk_dir, ignore_errors=True)
     ttl = settings.uploads_ttl
     if ttl < 0:
         return
-    now = time.time()
-    for f in Path(settings.upload_dir).iterdir():
+    for f in upload_dir.iterdir():
         if f.is_file() and (ttl == 0 or now - f.stat().st_mtime > ttl * 60):
             f.unlink(missing_ok=True)
 

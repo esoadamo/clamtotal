@@ -406,6 +406,32 @@ def test_pending_page_uses_configured_poll_interval(client, monkeypatch):
     assert 'data-interval="7000"' in client.get(f"/ui/file/{sha}").text
 
 
+def test_prune_uploads_removes_stale_chunk_dirs(tmp_path, monkeypatch):
+    import os
+    import time
+
+    from app.main import _prune_uploads
+
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    chunks = tmp_path / ".chunks"
+    stale = chunks / ("a" * 64)
+    fresh = chunks / ("b" * 64)
+    stale.mkdir(parents=True)
+    fresh.mkdir(parents=True)
+    (stale / "000000").write_bytes(b"partial")
+    (fresh / "000000").write_bytes(b"partial")
+    old = time.time() - 7200
+    os.utime(stale, (old, old))
+
+    monkeypatch.setattr(settings, "uploads_ttl", -1)  # samples kept forever...
+    _prune_uploads()
+    assert not stale.exists()  # ...but stale chunk dirs are pruned regardless
+    assert fresh.exists()
+
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "missing"))
+    _prune_uploads()  # missing upload dir must not crash
+
+
 def test_prune_uploads_ttl(tmp_path, monkeypatch):
     from app.main import _prune_uploads
 
