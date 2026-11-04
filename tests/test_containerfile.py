@@ -228,6 +228,27 @@ def test_entrypoint_uses_prebuilt_venv_no_runtime_sync():
     ]
 
 
+def test_ci_runs_integration_test_between_build_and_publish():
+    wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text()
+    # order: local build (no push) -> boot image + EICAR upload -> publish to GHCR
+    build = wf.index("Build image locally")
+    it = wf.index("Integration test")
+    publish = wf.index("Publish image to GHCR")
+    assert build < it < publish
+    assert "push: false" in wf and "load: true" in wf  # first build stays local
+    assert "bash tests/integration/eicar-smoke.sh clamtotal:it" in wf
+
+
+def test_integration_smoke_assets():
+    script = (ROOT / "tests" / "integration" / "eicar-smoke.sh").read_text()
+    # minimal sigs + no downloads => instant start; EICAR upload must be detected
+    assert "CLAM_AUTOUPDATE=false" in script
+    assert "/api/v2/files" in script
+    assert "infected" in script and "eicar" in script.lower()
+    hdb = (ROOT / "tests" / "integration" / "signatures" / "eicar.hdb").read_text().strip()
+    assert hdb == "44d88612fea8a8f36de82e1278abb02f:68:Eicar-Test-Signature"
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:

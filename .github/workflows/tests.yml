@@ -120,11 +120,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image to GHCR
+      - name: Build image locally (not published yet)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Containerfile  # the image manifest is a Containerfile, not Dockerfile
+          load: true
+          push: false
+          tags: clamtotal:it
+
+      # Integration test BEFORE publishing: boot the actual image with a minimal
+      # signature set (tests/integration/signatures, CLAM_AUTOUPDATE=false -> no
+      # downloads, instant start) and verify an EICAR upload is detected.
+      - name: Integration test — run image, upload EICAR, expect detection
+        run: bash tests/integration/eicar-smoke.sh clamtotal:it
+
+      - name: Publish image to GHCR (only after the integration test passed; cached rebuild)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/clamtotal:latest

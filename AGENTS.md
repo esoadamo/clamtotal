@@ -36,6 +36,11 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - GitHub Actions (`.github/workflows/tests.yml`) runs on every push/PR: ruff
   format+check, `ty check`, alembic migrations, `pytest` (100% coverage gate),
   bandit SAST, pip-audit SCA; the container image builds only if all pass.
+  On `main`, after the local image build and BEFORE the GHCR publish step, an
+  integration smoke test (`tests/integration/eicar-smoke.sh`) boots the actual
+  image with a one-signature DB (`tests/integration/signatures/eicar.hdb`,
+  `CLAM_AUTOUPDATE=false` — no downloads, instant start) and asserts an EICAR
+  upload via `POST /api/v2/files` is detected as infected.
 
 ## Commands
 
