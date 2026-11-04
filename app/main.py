@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from anyio import to_thread
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -418,7 +419,11 @@ async def upload(
         raise HTTPException(status_code=400, detail="empty file")
     if len(data) > settings.max_upload_size:
         raise HTTPException(status_code=413, detail="file too large")
-    scan, cached = _enqueue_scan(background_tasks, db, data, file.filename or "upload.bin", rescan)
+    # hashing/sniffing a large file is CPU-heavy — run off the event loop so other
+    # requests (incl. in-flight chunk uploads) are not stalled while it runs
+    scan, cached = await to_thread.run_sync(
+        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", rescan
+    )
     return JSONResponse(
         status_code=200 if cached else 202,
         content={"sha256": scan.sha256, "status": scan.status, "cached": cached},
@@ -426,6 +431,15 @@ async def upload(
 
 
 _CHUNK_NAME_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _assemble_chunks(chunks_dir: Path, total: int, sha256: str) -> tuple[bytes, bool]:
+    """Reassemble chunk files and verify size + SHA-256. Returns (data, ok)."""
+    assembled = b"".join((chunks_dir / f"{i:06d}").read_bytes() for i in range(total))
+    ok = (
+        len(assembled) <= settings.max_upload_size and compute_hashes(assembled)["sha256"] == sha256
+    )
+    return assembled, ok
 
 
 @app.post(
@@ -485,12 +499,13 @@ async def upload_chunk(
                 "total": total,
             },
         )
-    assembled = b"".join((chunks_dir / f"{i:06d}").read_bytes() for i in range(total))
+    # reassemble + hash off the event loop: up to MAX_UPLOAD_SIZE of CPU/IO work
+    assembled, ok = await to_thread.run_sync(_assemble_chunks, chunks_dir, total, sha256)
     shutil.rmtree(chunks_dir, ignore_errors=True)
-    if len(assembled) > settings.max_upload_size or compute_hashes(assembled)["sha256"] != sha256:
+    if not ok:
         raise HTTPException(status_code=400, detail="assembled file failed hash/size verification")
-    scan, cached = _enqueue_scan(
-        background_tasks, db, assembled, name or file.filename or "upload.bin", False
+    scan, cached = await to_thread.run_sync(
+        _enqueue_scan, background_tasks, db, assembled, name or file.filename or "upload.bin", False
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -647,7 +662,9 @@ async def api_scan(
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})
-    scan, cached = _enqueue_scan(background_tasks, db, data, file.filename or "upload.bin", False)
+    scan, cached = await to_thread.run_sync(
+        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", False
+    )
     return JSONResponse(
         status_code=200 if cached else 202,
         content={
