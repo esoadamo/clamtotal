@@ -32,6 +32,13 @@ from app.config import settings
 from app.db import SessionLocal, get_db
 from app.models import Scan
 from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
+from app.schemas import (
+    ApiScanResponse,
+    ErrorResponse,
+    FileReport,
+    HealthResponse,
+    UploadResponse,
+)
 
 
 def _recover_pending_scans() -> None:
@@ -346,7 +353,17 @@ def _enqueue_scan(
     return scan, False
 
 
-@app.post("/file/upload")
+@app.post(
+    "/file/upload",
+    response_model=UploadResponse,
+    responses={
+        202: {"model": UploadResponse, "description": "scan queued"},
+        400: {"model": ErrorResponse},
+        413: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
 async def upload(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -496,7 +513,16 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
     return templates.TemplateResponse(request, "search.html", {"q": q, "results": results})
 
 
-@app.post("/api/v2/files")
+@app.post(
+    "/api/v2/files",
+    response_model=ApiScanResponse,
+    responses={
+        202: {"model": ApiScanResponse, "description": "scan queued"},
+        400: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
 async def api_scan(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -521,7 +547,11 @@ async def api_scan(
     )
 
 
-@app.get("/api/v2/files/{hash_value}")
+@app.get(
+    "/api/v2/files/{hash_value}",
+    response_model=FileReport,
+    responses={404: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+)
 def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
     scan = _lookup(db, hash_value)
     if scan is None:
@@ -550,6 +580,6 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
     )
 
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+@app.get("/healthz", response_model=HealthResponse)
+def healthz() -> HealthResponse:
+    return HealthResponse(status="ok")

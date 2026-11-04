@@ -76,6 +76,38 @@ def test_startup_recovers_pending_scans():
         assert db.get(Scan, sha_gone) is None  # deleted: file was gone
 
 
+def test_openapi_documents_response_models(client):
+    spec = client.get("/openapi.json").json()
+    schemas = spec["components"]["schemas"]
+    for name in [
+        "UploadResponse",
+        "ApiScanResponse",
+        "FileReport",
+        "HealthResponse",
+        "EngineVerdict",
+    ]:
+        assert name in schemas, name
+    upload = spec["paths"]["/file/upload"]["post"]
+    assert upload["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/UploadResponse"
+    )
+    assert "202" in upload["responses"]
+    api = spec["paths"]["/api/v2/files"]["post"]
+    assert api["responses"]["202"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ApiScanResponse"
+    )
+    report = spec["paths"]["/api/v2/files/{hash_value}"]["get"]
+    assert report["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/FileReport"
+    )
+    assert "404" in report["responses"]
+    # FileReport fields are explicit
+    props = schemas["FileReport"]["properties"]
+    for f in ["sha256", "verdict", "status", "engines", "iocs", "behavior", "scanned_at"]:
+        assert f in props, f
+    assert props["engines"]["items"]["$ref"].endswith("/EngineVerdict")
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
