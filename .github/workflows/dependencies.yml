@@ -13,10 +13,10 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Upgrade all locked dependencies
         run: uv lock --upgrade
@@ -34,7 +34,8 @@ jobs:
           uvx pip-audit --requirement /tmp/reqs.txt --strict
 
       - name: Create pull request with updated dependencies
-        uses: peter-evans/create-pull-request@v6
+        id: create-pr
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           title: "chore(deps): update locked dependencies"
           body: |
@@ -44,3 +45,15 @@ jobs:
             unit tests (100% coverage gate), frontend JS tests, and pip-audit SAST.
           branch: chore/update-dependencies
           commit-message: "chore(deps): update locked dependencies"
+
+      - name: Enable auto-merge (merges automatically once all checks pass)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pull-request-number }}
+        run: |
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "0" ]; then
+            gh pr merge --auto --squash "$PR_NUMBER"
+            echo "Auto-merge enabled on PR #$PR_NUMBER — it merges when the tests workflow passes."
+          else
+            echo "No dependency changes — nothing to auto-merge."
+          fi

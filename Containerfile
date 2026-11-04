@@ -50,6 +50,7 @@ RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficia
 RUN sed -i \
       -e 's/^#\{0,1\}\(TCPSocket 3310\)/\1/' \
       -e 's/^#\{0,1\}\(TCPAddr .*\)/TCPAddr 0.0.0.0/' \
+      -e 's/^#\{0,1\}\(LocalSocket .*\)/# LocalSocket disabled — TCP INSTREAM only (app connects via TCP 3310)/' \
       /etc/clamav/clamd.conf \
     && { grep -q '^TCPSocket 3310' /etc/clamav/clamd.conf || echo 'TCPSocket 3310' >> /etc/clamav/clamd.conf; } \
     && { grep -q '^TCPAddr 0.0.0.0' /etc/clamav/clamd.conf || echo 'TCPAddr 0.0.0.0' >> /etc/clamav/clamd.conf; }

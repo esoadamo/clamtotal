@@ -47,6 +47,24 @@ def test_fangfrisch_db_not_inside_clamav_dbdir():
     assert "rm -f /var/lib/clamav/fangfrisch.db" in ep  # self-heal broken containers
 
 
+def test_clamd_uses_tcp_only_no_local_socket():
+    # rootless podman: /var/run/clamav is not writable, so clamd dies on LocalSocket;
+    # the app only needs TCP INSTREAM on 3310
+    cf = (ROOT / "Containerfile").read_text()
+    assert "LocalSocket disabled" in cf
+    assert "TCPSocket 3310" in cf and "TCPAddr 0.0.0.0" in cf
+
+
+def test_github_actions_pinned_by_sha():
+    for wf in (ROOT / ".github" / "workflows").glob("*.yml"):
+        for line in wf.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("uses:"):
+                assert re.fullmatch(r"uses: [^@\s]+@[0-9a-f]{40}( .*)?", line), (
+                    f"{wf.name}: not pinned by hash: {line}"
+                )
+
+
 def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:
