@@ -24,12 +24,6 @@ if [ -n "$FANGFRISCH_BIN" ] && [ -f "$FANGFRISCH_CONF" ]; then
   fi
 fi
 
-# extremeshok/clamav-unofficial-sigs (public community signature set)
-if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && command -v git >/dev/null 2>&1; then
-  echo "[signatures] refreshing extremeshok unofficial sigs..."
-  update-unofficial-sigs.sh || echo "[signatures] extremeshok update failed — keeping existing files"
-fi
-
 # make clamd reload the signature database
 pkill -HUP -x clamd 2>/dev/null || true
 echo "[signatures] done."

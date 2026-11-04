@@ -39,9 +39,23 @@ def test_signature_scripts_fail_gracefully_offline():
     s = (ROOT / "scripts/update-signatures.sh").read_text()
     assert "fangfrisch refresh failed (offline?)" in s
     assert "tail -n 1 /tmp/fangfrisch.log" in s
-    u = (ROOT / "scripts/update-unofficial-sigs.sh").read_text()
-    assert "clone failed (offline?)" in u
-    assert "exit 0" in u
+    assert "update-unofficial-sigs.sh" not in s  # extremeshok repo ships no sig files anymore
+
+
+def test_extremeshok_script_removed_repo_has_no_sig_files():
+    # extremeshok/clamav-unofficial-sigs no longer ships signature files in the repo
+    # (verified: 0 *.db/*.ndb/... on master and recent tags), so cloning it can only
+    # ever install 0 files — the script was removed
+    assert not (ROOT / "scripts" / "update-unofficial-sigs.sh").exists()
+    cf = (ROOT / "Containerfile").read_text()
+    assert "update-unofficial-sigs.sh" not in cf
+
+
+def test_entrypoint_starts_clamd_before_signature_bootstrap():
+    # freshclam's NotifyClamd fails with 'Connection refused' if the bootstrap runs
+    # before clamd listens on 3310
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert ep.index("clamd &") < ep.index("update-signatures.sh")
 
 
 def test_fangfrisch_db_not_inside_clamav_dbdir():

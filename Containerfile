@@ -35,12 +35,12 @@ RUN uv sync --frozen --no-dev --no-install-project --group signatures
 
 # Unofficial signature DBs (SaneSecurity etc., includes YARA rules) via fangfrisch.
 COPY container/fangfrisch.conf /etc/fangfrisch.conf
-COPY scripts/update-signatures.sh scripts/update-unofficial-sigs.sh /usr/local/bin/
+COPY scripts/update-signatures.sh /usr/local/bin/
 # fangfrisch is installed in the uv venv, not on PATH — call it via the venv binary.
 # Signature semantics: by default NOTHING is downloaded at build time (signatures are
 # fetched on first container launch, see container-entrypoint.sh). AIRGAPPED=true bakes
 # signatures into the image at build time instead.
-RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-unofficial-sigs.sh \
+RUN chmod +x /usr/local/bin/update-signatures.sh \
     && mkdir -p /var/lib/fangfrisch \
     && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
     && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
