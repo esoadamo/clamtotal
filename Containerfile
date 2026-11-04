@@ -52,6 +52,9 @@ RUN sed -i \
       -e 's/^#\{0,1\}\(TCPAddr .*\)/TCPAddr 0.0.0.0/' \
       -e 's/^#\{0,1\}\(LocalSocket .*\)/# LocalSocket disabled — TCP INSTREAM only (app connects via TCP 3310)/' \
       /etc/clamav/clamd.conf \
+    && sed -i \
+      -e 's/^#\{0,1\}\(NotifyClamd .*\)/# NotifyClamd disabled — bootstrap downloads run before clamd starts/' \
+      /etc/clamav/freshclam.conf \
     && { grep -q '^TCPSocket 3310' /etc/clamav/clamd.conf || echo 'TCPSocket 3310' >> /etc/clamav/clamd.conf; } \
     && { grep -q '^TCPAddr 0.0.0.0' /etc/clamav/clamd.conf || echo 'TCPAddr 0.0.0.0' >> /etc/clamav/clamd.conf; }
 

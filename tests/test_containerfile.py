@@ -51,11 +51,15 @@ def test_extremeshok_script_removed_repo_has_no_sig_files():
     assert "update-unofficial-sigs.sh" not in cf
 
 
-def test_entrypoint_starts_clamd_before_signature_bootstrap():
-    # freshclam's NotifyClamd fails with 'Connection refused' if the bootstrap runs
-    # before clamd listens on 3310
+def test_entrypoint_bootstraps_signatures_before_clamd():
+    # clamd refuses to start when /var/lib/clamav has no supported database files
+    # ('No supported database files found'), so the first-launch bootstrap must run first
     ep = (ROOT / "container-entrypoint.sh").read_text()
-    assert ep.index("clamd &") < ep.index("update-signatures.sh")
+    assert ep.index("update-signatures.sh") < ep.index("clamd &")
+    cf = (ROOT / "Containerfile").read_text()
+    assert (
+        "NotifyClamd disabled" in cf
+    )  # bootstrap runs before clamd, so freshclam must not notify it
 
 
 def test_fangfrisch_db_not_inside_clamav_dbdir():
