@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -45,6 +46,43 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
 
 
 app = FastAPI(title="ClamTotal", version="0.1.0", lifespan=lifespan)
+
+
+def _rate_limits_doc() -> str:
+    window = settings.rate_limit_window_seconds
+
+    def fmt(limit: int, endpoints: str) -> str:
+        if limit <= 0:
+            return f"- {endpoints}: unlimited (rate limit disabled)"
+        return f"- {endpoints}: {limit} requests per {window}s per IP (HTTP 429 when exceeded)"
+
+    return "\n".join(
+        [
+            "## Rate limits (per client IP)",
+            fmt(
+                settings.rate_limit_upload,
+                "Uploads (`POST /file/upload`, `POST /api/v2/files`)",
+            ),
+            fmt(
+                settings.rate_limit_browse,
+                "Browsing result pages (`GET /ui/`, `/ui/search`, `/ui/file/{hash}`)",
+            ),
+        ]
+    )
+
+
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema["info"]["description"] = (
+        "ClamTotal API — VirusTotal-style file analysis.\n\n" + _rate_limits_doc()
+    )
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi  # type: ignore
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 

@@ -5,6 +5,29 @@ from app.config import settings
 from app.scanner import ScannerUnavailableError, get_scanner
 
 
+def test_openapi_docs_describe_current_rate_limits(client, monkeypatch):
+    import app.main as m
+
+    m.app.openapi_schema = None
+    client.get("/openapi.json")  # generates and caches the schema
+    desc = client.get("/openapi.json").json()["info"]["description"]  # cached branch
+    assert "## Rate limits" in desc
+    assert "unlimited (rate limit disabled)" in desc  # defaults: RATE_LIMIT_* = 0
+
+    monkeypatch.setattr(settings, "rate_limit_upload", 10)
+    monkeypatch.setattr(settings, "rate_limit_browse", 100)
+    monkeypatch.setattr(settings, "rate_limit_window_seconds", 60)
+    m.app.openapi_schema = None
+    desc = client.get("/openapi.json").json()["info"]["description"]
+    assert "Uploads (`POST /file/upload`, `POST /api/v2/files`): 10 requests per 60s" in desc
+    assert (
+        "Browsing result pages (`GET /ui/`, `/ui/search`, `/ui/file/{hash}`): 100 requests per 60s"
+        in desc
+    )
+    assert "HTTP 429" in desc
+    m.app.openapi_schema = None
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
