@@ -349,10 +349,10 @@ _MODE_ALIASES = {
 }
 
 
-@lru_cache(maxsize=1)
-def get_scanner() -> Scanner | None:
-    if "clamav" not in enabled_scanners():
-        return None  # ClamAV disabled via ENABLED_SCANNERS; scans run with the other engines
+def _probe_scanner(wait: bool) -> Scanner:
+    """Probe the ClamAV backend. With wait=True (first-ever probe, e.g. at startup)
+    clamd gets up to ~60s to finish loading its databases; with wait=False a single
+    attempt is made, so requests fail fast when the backend is down."""
     raw_mode = settings.clam_mode.lower()
     if raw_mode not in _MODE_ALIASES:
         raise ScannerUnavailableError(
@@ -363,10 +363,11 @@ def get_scanner() -> Scanner | None:
         clamd = ClamdScanner()
         # clamd may still be loading its databases at startup — wait up to ~60s for PONG.
         # (The container entrypoint also blocks uvicorn on PONG, this covers races/restarts.)
-        for _ in range(30):
+        for _ in range(30 if wait else 1):
             if clamd.available():
                 return clamd
-            time.sleep(2)
+            if wait:
+                time.sleep(2)
         if mode == "daemon":
             target = settings.clamd_socket or f"{settings.clamd_host}:{settings.clamd_port}"
             raise ScannerUnavailableError(
@@ -384,3 +385,34 @@ def get_scanner() -> Scanner | None:
         f"{target} and clamscan binary not found ({settings.clamscan_path}) — "
         "run clamd (CLAM_MODE=daemon) or install clamscan (CLAM_MODE=cli)"
     )
+
+
+_scanner_lock = threading.Lock()
+_scanner_cache: Scanner | None = None
+_scanner_probed = False
+
+
+def get_scanner() -> Scanner | None:
+    """Resolve and memoize the ClamAV backend; None when ClamAV is disabled via
+    ENABLED_SCANNERS. The first-ever probe waits up to ~60s for clamd to load; after a
+    failed probe, later calls re-probe single-shot, so a down backend fails fast (503)
+    on every request instead of blocking each one, and recovers once clamd is up."""
+    global _scanner_cache, _scanner_probed
+    if "clamav" not in enabled_scanners():
+        return None
+    with _scanner_lock:
+        if _scanner_cache is not None:
+            return _scanner_cache
+        wait = not _scanner_probed
+        _scanner_probed = True
+    scanner = _probe_scanner(wait=wait)
+    with _scanner_lock:
+        _scanner_cache = scanner
+    return scanner
+
+
+def reset_scanner_cache() -> None:
+    global _scanner_cache, _scanner_probed
+    with _scanner_lock:
+        _scanner_cache = None
+        _scanner_probed = False

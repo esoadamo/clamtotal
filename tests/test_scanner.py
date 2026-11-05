@@ -20,6 +20,7 @@ from app.scanner import (
     enabled_scanners,
     get_scanner,
     get_yara_scanner,
+    reset_scanner_cache,
 )
 
 
@@ -140,12 +141,12 @@ def test_yara_scanner_matches_filepath(monkeypatch, tmp_path):
 
 @pytest.fixture(autouse=True)
 def clear_caches(monkeypatch):
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     get_yara_scanner.cache_clear()
     enabled_scanners.cache_clear()
     monkeypatch.setattr(scanner_module.time, "sleep", lambda s: None)  # keep retry loop fast
     yield
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     get_yara_scanner.cache_clear()
     enabled_scanners.cache_clear()
 
@@ -389,31 +390,31 @@ def test_get_scanner_modes(monkeypatch):
     monkeypatch.setattr(ClamdScanner, "available", lambda self: True)
     assert isinstance(get_scanner(), ClamdScanner)
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "daemon")
     monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
     with pytest.raises(ScannerUnavailableError):
         get_scanner()
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "cli")
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/clamscan")
     assert isinstance(get_scanner(), ClamscanScanner)
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "cli")
     monkeypatch.setattr(shutil, "which", lambda name: None)
     with pytest.raises(ScannerUnavailableError):
         get_scanner()
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "auto")
     monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     with pytest.raises(ScannerUnavailableError):
         get_scanner()
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "auto")
     monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
     monkeypatch.setattr(
@@ -428,13 +429,13 @@ def test_get_scanner_clamd_alias_and_unknown_mode_fallback(monkeypatch):
     monkeypatch.setattr(ClamdScanner, "available", lambda self: True)
     assert isinstance(get_scanner(), ClamdScanner)
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     monkeypatch.setattr(settings, "clam_mode", "clamd")
     monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
     with pytest.raises(ScannerUnavailableError, match=r"CLAM_MODE=clamd"):
         get_scanner()
 
-    get_scanner.cache_clear()
+    reset_scanner_cache()
     # unknown mode values fail fast instead of silently guessing a backend
     monkeypatch.setattr(settings, "clam_mode", "bogus")
     with pytest.raises(ScannerUnavailableError, match=r"unknown CLAM_MODE='bogus'"):
@@ -568,6 +569,33 @@ def test_enabled_scanners_parsing(monkeypatch):
 def test_get_scanner_none_when_clamav_disabled(monkeypatch):
     monkeypatch.setattr(settings, "enabled_scanners", "yara")
     assert get_scanner() is None  # no backend probed at all
+
+
+def test_get_scanner_failure_is_not_rewaited(monkeypatch):
+    # first probe waits out the ~60s PING loop; after a failure, later calls must be
+    # single-shot (no sleeping) so upload requests fail fast instead of hanging
+    sleeps: list[float] = []
+    monkeypatch.setattr(scanner_module.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(settings, "clam_mode", "daemon")
+    monkeypatch.setattr(ClamdScanner, "available", lambda self: False)
+    with pytest.raises(ScannerUnavailableError):
+        get_scanner()
+    assert len(sleeps) == 30  # 30 attempts, sleeping after each failed one
+    with pytest.raises(ScannerUnavailableError):
+        get_scanner()
+    assert len(sleeps) == 30  # no additional sleep on the re-probe
+
+
+def test_get_scanner_recovers_single_shot_after_failure(monkeypatch):
+    monkeypatch.setattr(settings, "clam_mode", "daemon")
+    state = {"up": False}
+    monkeypatch.setattr(ClamdScanner, "available", lambda self: state["up"])
+    monkeypatch.setattr(scanner_module.time, "sleep", lambda s: None)
+    with pytest.raises(ScannerUnavailableError):
+        get_scanner()  # first probe waits, then fails
+    state["up"] = True
+    assert isinstance(get_scanner(), ClamdScanner)  # recovers without waiting again
+    assert get_scanner() is get_scanner()  # memoized on success
 
 
 def test_get_yara_scanner_none_when_yara_disabled(monkeypatch, tmp_path):

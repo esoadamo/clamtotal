@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import shutil
 import threading
@@ -78,8 +79,23 @@ def _recover_pending_scans() -> None:
         db.commit()
 
 
+logger = logging.getLogger(__name__)
+
+
+def _probe_scanner_at_startup() -> None:
+    """Resolve the ClamAV backend once at startup, warming the scanner cache: the
+    first probe may wait ~60s for clamd to load its databases and must not happen
+    inside an upload request (a reloader restart or proxy timeout in that window
+    surfaces as a 502). Later requests then fail fast with 503 while it is down."""
+    try:
+        get_scanner()
+    except ScannerUnavailableError as exc:
+        logger.warning("ClamAV backend unavailable at startup: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    _probe_scanner_at_startup()
     _recover_pending_scans()
 
     def loop() -> None:

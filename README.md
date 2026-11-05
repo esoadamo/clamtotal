@@ -58,7 +58,7 @@ Requires Python >= 3.12, [uv](https://docs.astral.sh/uv/), and ClamAV
 ```sh
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --reload-dir app   # watch only app/ so uploads/db writes never restart the server mid-request
 ```
 
 Open http://127.0.0.1:8000/ui/ — try uploading the

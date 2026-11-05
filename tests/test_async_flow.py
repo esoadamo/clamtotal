@@ -1,4 +1,5 @@
 import hashlib
+import logging
 
 import pytest
 from fakes import fake_scanner
@@ -275,6 +276,22 @@ def test_require_any_engine_ok_with_yara_only(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
     assert main_module._require_any_engine(None) is None
     assert main_module._require_any_engine(fake_scanner) is fake_scanner
+
+
+def test_startup_probe_warns_when_backend_down(monkeypatch, caplog):
+    def boom():
+        raise ScannerUnavailableError("no backend")
+
+    monkeypatch.setattr(main_module, "get_scanner", boom)
+    with caplog.at_level(logging.WARNING):
+        main_module._probe_scanner_at_startup()  # must not raise at startup
+    assert "no backend" in caplog.text
+
+
+def test_startup_probe_quiet_when_backend_ok(caplog):
+    with caplog.at_level(logging.WARNING):
+        main_module._probe_scanner_at_startup()
+    assert "unavailable" not in caplog.text
 
 
 def test_upload_twice_second_is_cached_200(client):

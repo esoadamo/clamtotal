@@ -47,7 +47,7 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 ```sh
 uv sync                          # install deps
 uv run alembic upgrade head      # apply migrations
-uv run uvicorn app.main:app --reload          # dev server (needs clamscan installed)
+uv run uvicorn app.main:app --reload --reload-dir app   # dev server (needs clamscan installed); watch only app/ so runtime data (uploads, sqlite db) never restarts the server mid-request
 uv run pytest                    # tests
 uv run ruff format . && uv run ruff check .
 uv run ty check
