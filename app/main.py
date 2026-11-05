@@ -45,7 +45,13 @@ from app.analysis import (
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.models import Scan
-from app.scanner import Scanner, ScannerUnavailableError, get_scanner, get_yara_scanner
+from app.scanner import (
+    Scanner,
+    ScannerUnavailableError,
+    ScanResult,
+    get_scanner,
+    get_yara_scanner,
+)
 from app.schemas import (
     ApiScanResponse,
     ChunkUploadResponse,
@@ -240,15 +246,20 @@ def _lookup(db: Session, hash_value: str) -> Scan | None:
 def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
     """Initial per-engine progress rows (all "scanning") for a freshly enqueued scan.
     The ClamAV engine name comes from the active scanner when one is already resolved
-    (lru_cached, so this does not block); otherwise fall back to a generic name."""
+    (lru_cached, so this does not block); when ClamAV is enabled but not resolvable
+    right now, fall back to a generic name. ClamAV disabled via ENABLED_SCANNERS
+    (get_scanner() is None) simply gets no row."""
+    engines: list[dict] = []
     if scanner is not None:
-        clam_name = scanner.engine
+        engines.append({"name": scanner.engine, "status": "scanning"})
     else:
         try:
-            clam_name = get_scanner().engine
+            clam = get_scanner()
         except ScannerUnavailableError:
-            clam_name = "ClamAV"
-    engines = [{"name": clam_name, "status": "scanning"}]
+            engines.append({"name": "ClamAV", "status": "scanning"})
+        else:
+            if clam is not None:
+                engines.append({"name": clam.engine, "status": "scanning"})
     yara = get_yara_scanner()
     if yara is not None:
         engines.append({"name": yara.engine, "status": "scanning"})
@@ -257,7 +268,7 @@ def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
 
 def _scan_and_store(
     db: Session,
-    scanner: Scanner,
+    scanner: Scanner | None,
     data: bytes,
     file_name: str,
     rescan: bool,
@@ -295,20 +306,30 @@ def _scan_and_store(
     # in place also mutates SQLAlchemy's committed state, and later commits then
     # see no change and silently skip the UPDATE.
     engines = _scanning_engines(scanner)
+    if not engines:
+        raise ScannerUnavailableError(
+            "no scan engines enabled/available (check ENABLED_SCANNERS and YARA_RULES_DIR)"
+        )
     scan.engines = [dict(e) for e in engines]
     scan.status = "pending"
     scan.verdict = "pending"
     db.commit()
 
-    result = scanner.scan(data, path=path)
-    engines[0].update({"status": "done", "verdict": result.verdict, "signature": result.signature})
-    scan.engines = [dict(e) for e in engines]
-    db.commit()
+    result: ScanResult | None = None
+    engine_idx = 0
+    if scanner is not None:
+        result = scanner.scan(data, path=path)
+        engines[engine_idx].update(
+            {"status": "done", "verdict": result.verdict, "signature": result.signature}
+        )
+        engine_idx += 1
+        scan.engines = [dict(e) for e in engines]
+        db.commit()
 
     yara = get_yara_scanner()
     if yara is not None:
         matches = yara.scan(data, path=path)
-        engines[1].update(
+        engines[engine_idx].update(
             {
                 "status": "done",
                 "verdict": "infected" if matches else "clean",
@@ -375,9 +396,9 @@ def _scan_and_store(
         verdict=verdict,
         status="done",
         signature=signature,
-        engine=result.engine,
+        engine=result.engine if result is not None else engines[-1]["name"],
         urls=urls,
-        raw_output=result.raw,
+        raw_output=result.raw if result is not None else "",
         engines=engines,
         iocs=iocs,
         behavior=behavior,
@@ -522,7 +543,7 @@ async def upload(
     file: UploadFile = File(...),
     rescan: bool = False,
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
 ) -> JSONResponse:
     _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()
@@ -585,7 +606,7 @@ async def upload_chunk(
     total: int = Form(...),
     name: str = Form(""),
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
 ) -> JSONResponse:
     """Chunked upload for large files (behind proxies with request-body size limits).
     Chunks are stored under UPLOAD_DIR/.chunks/<sha256>/; when the last one arrives the
@@ -651,7 +672,7 @@ async def upload_chunk(
 async def upload_ws(
     websocket: WebSocket,
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
 ) -> None:
     # Chunked upload over one persistent WebSocket: small binary frames and no
     # per-request proxy body cap / ~100s timeout (Cloudflare limits that bite HTTP
@@ -833,7 +854,7 @@ def rescan(
     background_tasks: BackgroundTasks,
     hash_value: str,
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
 ) -> RedirectResponse:
     scan = _lookup(db, hash_value)
     stored = Path(settings.upload_dir) / scan.sha256 if scan else None
@@ -915,7 +936,7 @@ async def api_scan(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
 ) -> JSONResponse:
     _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()

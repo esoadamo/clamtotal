@@ -316,9 +316,25 @@ class YaraScanner:
             return sorted({m.rule for matches in results for m in matches})
 
 
+_KNOWN_SCANNERS = {"clamav", "yara"}
+
+
+@lru_cache(maxsize=1)
+def enabled_scanners() -> set[str]:
+    """Parse ENABLED_SCANNERS into the set of enabled engine names. Unknown or empty
+    values fail fast instead of silently guessing (same contract as CLAM_MODE)."""
+    tokens = {t.strip().lower() for t in settings.enabled_scanners.split(",") if t.strip()}
+    if not tokens or tokens - _KNOWN_SCANNERS:
+        raise ScannerUnavailableError(
+            f"unknown ENABLED_SCANNERS={settings.enabled_scanners!r}: expected a comma-separated "
+            "list of clamav, yara (at least one)"
+        )
+    return tokens
+
+
 @lru_cache(maxsize=1)
 def get_yara_scanner() -> YaraScanner | None:
-    if not settings.yara_rules_dir:
+    if "yara" not in enabled_scanners() or not settings.yara_rules_dir:
         return None
     scanner = YaraScanner(settings.yara_rules_dir)
     return scanner if scanner.available() else None
@@ -334,7 +350,9 @@ _MODE_ALIASES = {
 
 
 @lru_cache(maxsize=1)
-def get_scanner() -> Scanner:
+def get_scanner() -> Scanner | None:
+    if "clamav" not in enabled_scanners():
+        return None  # ClamAV disabled via ENABLED_SCANNERS; scans run with the other engines
     raw_mode = settings.clam_mode.lower()
     if raw_mode not in _MODE_ALIASES:
         raise ScannerUnavailableError(

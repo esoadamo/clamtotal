@@ -1,5 +1,6 @@
 import hashlib
 
+import pytest
 from fakes import fake_scanner
 
 import app.main as main_module
@@ -215,6 +216,50 @@ def test_scanning_engines_lists_yara_when_available(client, monkeypatch, tmp_pat
     engines = main_module._scanning_engines()
     assert [e["name"] for e in engines] == ["ClamAV (fake)", "YARA (local rules)"]
     assert all(e["status"] == "scanning" for e in engines)
+
+
+def test_scanning_engines_skips_clamav_when_disabled(client, monkeypatch, tmp_path):
+    from app.scanner import YaraScanner
+
+    (tmp_path / "r.yar").write_text("rule R { condition: true }")
+    monkeypatch.setattr(main_module, "get_scanner", lambda: None)  # clamav disabled
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
+    assert main_module._scanning_engines() == [{"name": "YARA (local rules)", "status": "scanning"}]
+
+
+def test_scan_and_store_yara_only_when_clamav_disabled(client, monkeypatch, tmp_path):
+    from app.scanner import YaraScanner
+
+    (tmp_path / "test.yar").write_text(
+        'rule Test_Marker { strings: $m = "MALWARE-MARKER-XYZ" condition: $m }'
+    )
+    monkeypatch.setattr(main_module, "get_scanner", lambda: None)  # clamav disabled
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
+    content = b"yara-only sample with MALWARE-MARKER-XYZ inside"
+    with SessionLocal() as db:
+        scan, cached = main_module._scan_and_store(db, None, content, "yara-only.bin", False)
+    assert cached is False
+    assert scan.status == "done"
+    assert scan.verdict == "infected"
+    assert scan.signature == "Test_Marker"
+    assert scan.engine == "YARA (local rules)"
+    assert scan.raw_output == ""
+    assert scan.engines == [
+        {
+            "name": "YARA (local rules)",
+            "status": "done",
+            "verdict": "infected",
+            "signature": "Test_Marker",
+        }
+    ]
+
+
+def test_scan_and_store_raises_when_no_engines_available(client, monkeypatch):
+    monkeypatch.setattr(main_module, "get_scanner", lambda: None)
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: None)
+    with SessionLocal() as db:
+        with pytest.raises(ScannerUnavailableError, match="no scan engines"):
+            main_module._scan_and_store(db, None, b"x", "none.bin", False)
 
 
 def test_upload_twice_second_is_cached_200(client):

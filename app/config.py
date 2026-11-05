@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     clamscan_path: str = "clamscan"
     clamscan_timeout: int = 600
 
+    # comma-separated list of enabled scan engines ("clamav,yara" = both, the default);
+    # unknown or empty values fail with an error instead of silently guessing
+    enabled_scanners: str = "clamav,yara"
+
     # local YARA rules directory (public rules only); empty disables the YARA engine
     yara_rules_dir: str = ""
     # recursive scan of archive members: max members per archive, max depth

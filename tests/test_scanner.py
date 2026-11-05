@@ -17,6 +17,7 @@ from app.scanner import (
     ClamscanScanner,
     ScannerUnavailableError,
     YaraScanner,
+    enabled_scanners,
     get_scanner,
     get_yara_scanner,
 )
@@ -141,10 +142,12 @@ def test_yara_scanner_matches_filepath(monkeypatch, tmp_path):
 def clear_caches(monkeypatch):
     get_scanner.cache_clear()
     get_yara_scanner.cache_clear()
+    enabled_scanners.cache_clear()
     monkeypatch.setattr(scanner_module.time, "sleep", lambda s: None)  # keep retry loop fast
     yield
     get_scanner.cache_clear()
     get_yara_scanner.cache_clear()
+    enabled_scanners.cache_clear()
 
 
 def test_clamd_tcp_clean(monkeypatch):
@@ -538,3 +541,37 @@ def test_yara_scanner_reload_is_background_and_does_not_block_scans(tmp_path, mo
 def test_struct_import_used():
     assert struct.pack(">I", 1) == b"\x00\x00\x00\x01"
     assert scanner_module.struct is struct
+
+
+def test_enabled_scanners_parsing(monkeypatch):
+    assert enabled_scanners() == {"clamav", "yara"}  # default: both engines
+
+    enabled_scanners.cache_clear()
+    monkeypatch.setattr(settings, "enabled_scanners", " yara , CLAMAV ")
+    assert enabled_scanners() == {"clamav", "yara"}  # case/whitespace-insensitive
+
+    enabled_scanners.cache_clear()
+    monkeypatch.setattr(settings, "enabled_scanners", "yara")
+    assert enabled_scanners() == {"yara"}
+
+    enabled_scanners.cache_clear()
+    monkeypatch.setattr(settings, "enabled_scanners", "bogus")
+    with pytest.raises(ScannerUnavailableError, match="ENABLED_SCANNERS='bogus'"):
+        enabled_scanners()
+
+    enabled_scanners.cache_clear()
+    monkeypatch.setattr(settings, "enabled_scanners", "")
+    with pytest.raises(ScannerUnavailableError, match="ENABLED_SCANNERS=''"):
+        enabled_scanners()
+
+
+def test_get_scanner_none_when_clamav_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "enabled_scanners", "yara")
+    assert get_scanner() is None  # no backend probed at all
+
+
+def test_get_yara_scanner_none_when_yara_disabled(monkeypatch, tmp_path):
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
+    monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "enabled_scanners", "clamav")
+    assert get_yara_scanner() is None

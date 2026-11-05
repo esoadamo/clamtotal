@@ -126,6 +126,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `CLAMD_SOCKET` | `/tmp/clamd.sock` in the container | Unix socket for clamd; when set, stored samples are scanned via `FILDES` (fd passed with `SCM_RIGHTS`), so no `StreamMaxLength` cap and no file-permission issues — multi-GB files work when `MAX_UPLOAD_SIZE` is raised |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |
+| `ENABLED_SCANNERS` | `clamav,yara` | comma-separated list of enabled scan engines: `clamav` (clamd/clamscan) and/or `yara` (local rules); any other value fails with an error |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
