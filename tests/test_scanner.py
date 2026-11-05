@@ -5,6 +5,7 @@ import stat
 import struct
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -455,14 +456,30 @@ def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):
     assert get_yara_scanner() is None
 
 
+def test_yara_scanner_combines_rule_files_into_one_rules_object(tmp_path):
+    # duplicate rule names across files are fine: each file gets its own namespace
+    (tmp_path / "a.yar").write_text("rule Same { condition: true }")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+    assert scanner._combined is not None and scanner._per_file == []
+    assert scanner.scan(b"x") == ["Same"]
+
+
 def test_yara_scanner_skips_broken_files_and_allows_duplicate_rule_names(tmp_path):
     (tmp_path / "broken.yar").write_text("rule Broken { condition: }")  # invalid syntax
     (tmp_path / "a.yar").write_text("rule Same { condition: true }")
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
     scanner = YaraScanner(str(tmp_path))
-    assert scanner.available() is True  # broken file skipped, valid ones compiled
+    # combined compile fails on the broken file -> per-file fallback, broken file skipped
+    assert scanner._combined is None and len(scanner._per_file) == 2
+    assert scanner.available() is True
     assert scanner.scan(b"x") == ["Same"]
+    # fallback matches also run (via the thread pool) against a stored file path
+    p = tmp_path / "f.bin"
+    p.write_bytes(b"x")
+    assert scanner.scan(b"x", path=p) == ["Same"]
 
 
 def test_yara_scanner_hot_reloads_on_stamp_change(tmp_path):
@@ -472,14 +489,50 @@ def test_yara_scanner_hot_reloads_on_stamp_change(tmp_path):
     # new rule file without a stamp change is NOT picked up yet
     (tmp_path / "b.yar").write_text("rule R2 { condition: true }")
     assert scanner.scan(b"x") == ["R1"]
-    # update-yara-rules.sh touches .rules-stamp -> recompile on next scan
+    # update-yara-rules.sh touches .rules-stamp -> recompile in a background thread
     stamp = tmp_path / ".rules-stamp"
     stamp.touch()
+    scanner.scan(b"x")  # triggers the background reload
+    reloading = scanner._reloading
+    assert reloading is not None
+    reloading.join()
     assert scanner.scan(b"x") == ["R1", "R2"]
     # stamp removed (e.g. rules dir replaced) -> recompile as well
     stamp.unlink()
     (tmp_path / "c.yar").write_text("rule R3 { condition: true }")
+    scanner.scan(b"x")
+    reloading = scanner._reloading
+    assert reloading is not None
+    reloading.join()
     assert scanner.scan(b"x") == ["R1", "R2", "R3"]
+
+
+def test_yara_scanner_reload_is_background_and_does_not_block_scans(tmp_path, monkeypatch):
+    (tmp_path / "a.yar").write_text("rule R1 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+    assert scanner.scan(b"x") == ["R1"]
+    (tmp_path / "b.yar").write_text("rule R2 { condition: true }")
+    (tmp_path / ".rules-stamp").touch()
+    # make the recompile block until we release it: scans must still answer (old rules)
+    real_compile = scanner_module.yara.compile
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_compile(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=10)
+        return real_compile(*args, **kwargs)
+
+    monkeypatch.setattr(scanner_module.yara, "compile", slow_compile)
+    assert scanner.scan(b"x") == ["R1"]  # reload running in background
+    assert scanner.scan(b"x") == ["R1"]  # second scan: reload already in flight
+    assert entered.wait(timeout=5)
+    release.set()
+    reloading = scanner._reloading
+    assert reloading is not None
+    reloading.join()
+    monkeypatch.setattr(scanner_module.yara, "compile", real_compile)
+    assert scanner.scan(b"x") == ["R1", "R2"]
 
 
 def test_struct_import_used():

@@ -7,7 +7,9 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -225,11 +227,15 @@ class ClamscanScanner:
 class YaraScanner:
     """Second engine: local YARA rules (yara-python). Fully offline, public rules only.
 
-    Rule files are compiled individually so duplicate rule names across third-party
-    rule sets (or a single broken file) cannot break the whole engine — broken files
-    are skipped. When scripts/update-yara-rules.sh refreshes rules it touches a
-    .rules-stamp file in the rules dir; the scanner recompiles on the next scan when
-    the stamp changes, so rule updates apply without an app restart.
+    All rule files are compiled into a single combined yara.Rules object (one matcher
+    pass over the sample instead of one match() call per file); each file gets its own
+    namespace, so duplicate rule names across third-party rule sets stay legal. If the
+    combined compile fails (e.g. one broken file), fall back to per-file compiles and
+    skip broken files so they cannot break the whole engine. When
+    scripts/update-yara-rules.sh refreshes rules it touches a .rules-stamp file in the
+    rules dir; the next scan then recompiles in a background thread, so scans keep
+    running on the current rules and pick up the new set once it is ready (no
+    multi-second pause on the scan after an update, no app restart needed).
     """
 
     engine = "YARA (local rules)"
@@ -237,46 +243,77 @@ class YaraScanner:
     def __init__(self, rules_dir: str) -> None:
         self._rules_dir = rules_dir
         self._stamp_path = Path(rules_dir) / ".rules-stamp"
-        self._rules: list = []
+        self._lock = threading.Lock()
+        self._combined = None  # single yara.Rules compiled from all files, when possible
+        self._per_file: list = []  # per-file compiled rules (fallback)
         self._stamp: int | None = None
+        self._reloading: threading.Thread | None = None
         self._load()
 
     def _load(self) -> None:
-        self._rules = []
         files = sorted(
             p
             for p in Path(self._rules_dir).glob("**/*")
             if p.suffix in (".yar", ".yara") and p.is_file()
         )
-        for f in files:
+        combined = None
+        per_file: list = []
+        if files:
             try:
-                self._rules.append(yara.compile(filepath=str(f)))
+                combined = yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(files)})
             except yara.Error:
-                continue
+                for f in files:
+                    try:
+                        per_file.append(yara.compile(filepath=str(f)))
+                    except yara.Error:
+                        continue
         try:
-            self._stamp = self._stamp_path.stat().st_mtime_ns
+            stamp = self._stamp_path.stat().st_mtime_ns
         except OSError:
-            self._stamp = None
+            stamp = None
+        with self._lock:
+            self._combined = combined
+            self._per_file = per_file
+            self._stamp = stamp
 
     def available(self) -> bool:
-        return bool(self._rules)
+        with self._lock:
+            return self._combined is not None or bool(self._per_file)
 
     def _reload_if_stamped(self) -> None:
         try:
             stamp = self._stamp_path.stat().st_mtime_ns
         except OSError:
             stamp = None
-        if stamp != self._stamp:
-            self._load()
+        with self._lock:
+            if stamp == self._stamp:
+                return
+            if self._reloading is not None and self._reloading.is_alive():
+                return
+            self._reloading = threading.Thread(target=self._load, daemon=True)
+            self._reloading.start()
 
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
-        matches = (
-            (m for rules in self._rules for m in rules.match(filepath=str(path)))
-            if path is not None
-            else (m for rules in self._rules for m in rules.match(data=data))
-        )
-        return sorted({m.rule for m in matches})
+        with self._lock:
+            rules_list = ([self._combined] if self._combined is not None else []) + list(
+                self._per_file
+            )
+        if not rules_list:
+            return []
+        # match by filepath (mmap) when the sample is on disk, else in-memory bytes
+        use_path = path is not None and path.exists()
+        if len(rules_list) == 1:
+            rules = rules_list[0]
+            matches = rules.match(filepath=str(path)) if use_path else rules.match(data=data)
+            return sorted({m.rule for m in matches})
+        # yara-python releases the GIL during match(), so per-file matches overlap
+        with ThreadPoolExecutor(max_workers=min(8, len(rules_list))) as pool:
+            if use_path:
+                results = pool.map(lambda r: r.match(filepath=str(path)), rules_list)
+            else:
+                results = pool.map(lambda r: r.match(data=data), rules_list)
+            return sorted({m.rule for matches in results for m in matches})
 
 
 @lru_cache(maxsize=1)

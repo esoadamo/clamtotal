@@ -307,7 +307,7 @@ def _scan_and_store(
 
     yara = get_yara_scanner()
     if yara is not None:
-        matches = yara.scan(data)
+        matches = yara.scan(data, path=path)
         engines[1].update(
             {
                 "status": "done",
