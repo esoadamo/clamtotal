@@ -92,6 +92,27 @@ def compute_hashes(data: bytes) -> dict[str, str]:
     }
 
 
+def compute_hashes_file(path: Path, chunk_size: int = 1024 * 1024) -> dict[str, str]:
+    """Streaming variant of compute_hashes: single pass over a file on disk with
+    bounded memory, so a 512 MB sample is never held in RAM just to hash it."""
+    hashers = {
+        "md5": hashlib.md5(usedforsecurity=False),
+        "sha1": hashlib.sha1(usedforsecurity=False),
+        "sha256": hashlib.sha256(),
+        "sha512": hashlib.sha512(),
+    }
+    crc = 0
+    with open(path, "rb") as f:
+        while True:
+            block = f.read(chunk_size)
+            if not block:
+                break
+            for h in hashers.values():
+                h.update(block)
+            crc = binascii.crc32(block, crc)
+    return {k: h.hexdigest() for k, h in hashers.items()} | {"crc32": f"{crc & 0xFFFFFFFF:08x}"}
+
+
 def extract_urls(data: bytes, limit: int = 200) -> list[str]:
     urls: list[str] = []
     for match in _URL_RE.finditer(data):
@@ -170,12 +191,28 @@ def sniff_file_type(data: bytes) -> tuple[str, str]:
     return "data", data[:16].hex()
 
 
-def shannon_entropy(data: bytes) -> float:
-    if not data:
+def _entropy(counts: Counter, length: int) -> float:
+    if not length:
         return 0.0
-    counts = Counter(data)
-    length = len(data)
     return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+
+def shannon_entropy(data: bytes) -> float:
+    return _entropy(Counter(data), len(data))
+
+
+def shannon_entropy_file(path: Path, chunk_size: int = 1024 * 1024) -> float:
+    """Streaming variant of shannon_entropy for large files on disk."""
+    counts: Counter = Counter()
+    length = 0
+    with open(path, "rb") as f:
+        while True:
+            block = f.read(chunk_size)
+            if not block:
+                break
+            counts.update(block)
+            length += len(block)
+    return _entropy(counts, length)
 
 
 def _rva_to_offset(rva: int, sections: list[tuple[int, int, int, int]]) -> int | None:

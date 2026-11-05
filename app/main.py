@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis import (
     compute_hashes,
+    compute_hashes_file,
     extract_embedded_files,
     extract_iocs,
     extract_urls,
@@ -36,7 +37,7 @@ from app.analysis import (
     parse_office,
     parse_pdf,
     parse_pe,
-    shannon_entropy,
+    shannon_entropy_file,
     sniff_file_type,
 )
 from app.config import settings
@@ -62,7 +63,7 @@ def _recover_pending_scans() -> None:
             stored = Path(settings.upload_dir) / scan.sha256
             if stored.exists():
                 threading.Thread(
-                    target=_run_scan, args=(stored.read_bytes(), scan.file_name), daemon=True
+                    target=_run_scan_file, args=(stored, scan.file_name), daemon=True
                 ).start()
             else:
                 db.delete(scan)
@@ -353,18 +354,43 @@ def _run_scan(data: bytes, file_name: str) -> None:
         (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
 
 
+def _run_scan_file(path: Path, file_name: str) -> None:
+    """Background scan of an already-stored sample: the file is read once here, in the
+    background, instead of holding the whole upload in the request's memory."""
+    _run_scan(path.read_bytes(), file_name)
+
+
 def _enqueue_scan(
     background_tasks: BackgroundTasks, db: Session, data: bytes, file_name: str, rescan: bool
 ) -> tuple[Scan, bool]:
-    """Return a cached done-row or enqueue an async scan. Returns (scan, was_cached)."""
+    """Whole-file upload: persist the bytes first, then enqueue the scan from disk."""
     hashes = compute_hashes(data)
+    path = Path(settings.upload_dir) / hashes["sha256"]
+    path.write_bytes(data)
+    return _enqueue_scan_file(background_tasks, db, path, hashes, file_name, rescan)
+
+
+def _enqueue_scan_file(
+    background_tasks: BackgroundTasks,
+    db: Session,
+    path: Path,
+    hashes: dict[str, str],
+    file_name: str,
+    rescan: bool = False,
+) -> tuple[Scan, bool]:
+    """Return a cached done-row or enqueue an async scan of the already-stored file.
+    `hashes` must equal compute_hashes_file(path) — on the chunked path they are computed
+    in one streaming pass during assembly, so large files are never re-read/re-hashed
+    on the request path. Returns (scan, was_cached)."""
     existing = db.get(Scan, hashes["sha256"])
     if existing and existing.status == "done" and not rescan:
         if file_name not in (existing.names or []):  # record alternative names on cache hits
             existing.names = sorted(set(existing.names or []) | {file_name})
             db.commit()
         return existing, True
-    file_type, magic_hex = sniff_file_type(data)
+    with open(path, "rb") as f:
+        head = f.read(65536)  # sniff_file_type only inspects the head of the file
+    file_type, magic_hex = sniff_file_type(head)
     if existing:
         existing.status = "pending"
         existing.verdict = "pending"
@@ -379,7 +405,7 @@ def _enqueue_scan(
             sha1=hashes["sha1"],
             file_name=file_name,
             names=[file_name],
-            size=len(data),
+            size=path.stat().st_size,
             file_type=file_type,
             magic_hex=magic_hex,
             verdict="pending",
@@ -389,8 +415,7 @@ def _enqueue_scan(
         )
         db.add(scan)
     db.commit()
-    (Path(settings.upload_dir) / scan.sha256).write_bytes(data)
-    background_tasks.add_task(_run_scan, data, file_name)
+    background_tasks.add_task(_run_scan_file, path, file_name)
     return scan, False
 
 
@@ -433,13 +458,25 @@ async def upload(
 _CHUNK_NAME_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _assemble_chunks(chunks_dir: Path, total: int, sha256: str) -> tuple[bytes, bool]:
-    """Reassemble chunk files and verify size + SHA-256. Returns (data, ok)."""
-    assembled = b"".join((chunks_dir / f"{i:06d}").read_bytes() for i in range(total))
-    ok = (
-        len(assembled) <= settings.max_upload_size and compute_hashes(assembled)["sha256"] == sha256
-    )
-    return assembled, ok
+def _assemble_chunks(
+    chunks_dir: Path, total: int, sha256: str
+) -> tuple[Path, dict[str, str]] | None:
+    """Stream chunk files into one assembled file (never holds the whole file in RAM),
+    then hash it in a single streaming pass. Returns (path, hashes), or None when the
+    size cap is exceeded or the SHA-256 does not match."""
+    assembled = chunks_dir / "assembled"
+    size = 0
+    with open(assembled, "wb") as out:
+        for i in range(total):
+            block = (chunks_dir / f"{i:06d}").read_bytes()
+            size += len(block)
+            if size > settings.max_upload_size:
+                return None
+            out.write(block)
+    hashes = compute_hashes_file(assembled)
+    if hashes["sha256"] != sha256:
+        return None
+    return assembled, hashes
 
 
 @app.post(
@@ -487,7 +524,8 @@ async def upload_chunk(
         raise HTTPException(status_code=400, detail="empty or oversized chunk")
     chunks_dir = Path(settings.upload_dir) / ".chunks" / sha256
     chunks_dir.mkdir(parents=True, exist_ok=True)
-    (chunks_dir / f"{index:06d}").write_bytes(data)
+    # blocking disk write off the event loop so in-flight requests are not stalled
+    await to_thread.run_sync((chunks_dir / f"{index:06d}").write_bytes, data)
     received = len(list(chunks_dir.iterdir()))
     if received < total:
         return JSONResponse(
@@ -499,13 +537,23 @@ async def upload_chunk(
                 "total": total,
             },
         )
-    # reassemble + hash off the event loop: up to MAX_UPLOAD_SIZE of CPU/IO work
-    assembled, ok = await to_thread.run_sync(_assemble_chunks, chunks_dir, total, sha256)
-    shutil.rmtree(chunks_dir, ignore_errors=True)
-    if not ok:
+    # reassemble + hash off the event loop: up to MAX_UPLOAD_SIZE of CPU/IO work,
+    # streamed to disk so the whole file is never held in memory at once
+    result = await to_thread.run_sync(_assemble_chunks, chunks_dir, total, sha256)
+    if result is None:
+        shutil.rmtree(chunks_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="assembled file failed hash/size verification")
+    assembled, hashes = result
+    final = Path(settings.upload_dir) / sha256
+    shutil.move(str(assembled), str(final))
+    shutil.rmtree(chunks_dir, ignore_errors=True)
     scan, cached = await to_thread.run_sync(
-        _enqueue_scan, background_tasks, db, assembled, name or file.filename or "upload.bin", False
+        _enqueue_scan_file,
+        background_tasks,
+        db,
+        final,
+        hashes,
+        name or file.filename or "upload.bin",
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -523,7 +571,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         )
     stored = Path(settings.upload_dir) / scan.sha256
     stored_exists = stored.exists()
-    entropy = shannon_entropy(stored.read_bytes()) if stored_exists else 0.0
+    entropy = shannon_entropy_file(stored) if stored_exists else 0.0
     pending = scan.status != "done"
     # relations: shared IOCs + archive membership (this file embedded in another scan, or this
     # archive containing other scans) — all resolved locally by hash, VT-style

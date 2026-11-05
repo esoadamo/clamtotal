@@ -220,6 +220,16 @@ def test_chunked_upload_rejects_bad_input(client, monkeypatch):
         ).status_code
         == 400
     )
+    # each chunk within MAX_UPLOAD_SIZE but their sum exceeds it -> 400 on assembly
+    monkeypatch.setattr(settings, "max_upload_size", 10)
+    for i in range(2):
+        r = client.post(
+            "/file/upload/chunk",
+            files={"file": ("p", b"x" * 6)},
+            data={"sha256": sha, "index": str(i), "total": "2"},
+        )
+    assert r.status_code == 400
+    assert "verification" in r.json()["detail"]
     # disabled when CHUNK_UPLOAD_SIZE=0
     monkeypatch.setattr(settings, "chunk_upload_size", 0)
     assert (

@@ -3,12 +3,15 @@ import struct
 import tarfile
 
 from app.analysis import (
+    compute_hashes,
+    compute_hashes_file,
     extract_embedded_files,
     list_archive_members,
     parse_elf,
     parse_office,
     parse_pe,
     shannon_entropy,
+    shannon_entropy_file,
 )
 
 
@@ -117,6 +120,23 @@ def test_parse_elf32_and_garbage():
 
 def test_shannon_entropy_empty():
     assert shannon_entropy(b"") == 0.0
+
+
+def test_compute_hashes_file_matches_in_memory(tmp_path):
+    data = b"streaming hash test payload " * 100000  # ~2.7 MB, spans multiple read blocks
+    p = tmp_path / "sample.bin"
+    p.write_bytes(data)
+    assert compute_hashes_file(p) == compute_hashes(data)
+
+
+def test_shannon_entropy_file_matches_in_memory(tmp_path):
+    data = bytes(range(256)) * 5000  # spans multiple read blocks, known distribution
+    p = tmp_path / "sample.bin"
+    p.write_bytes(data)
+    assert shannon_entropy_file(p) == shannon_entropy(data)
+    empty = tmp_path / "empty.bin"
+    empty.write_bytes(b"")
+    assert shannon_entropy_file(empty) == 0.0
 
 
 def test_list_archive_members_variants():
