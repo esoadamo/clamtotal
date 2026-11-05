@@ -3,9 +3,11 @@ set -e
 
 mkdir -p /data/uploads /rules
 
-# Keep clamd's INSTREAM size cap in sync with the app's STREAM_SCAN_MAX_SIZE (default 100M).
-# Files above it (but below MAX_UPLOAD_SIZE=512M) are scanned via clamd's file-based SCAN.
-STREAM_SCAN_MAX_SIZE="${STREAM_SCAN_MAX_SIZE:-104857600}"
+# Keep clamd's INSTREAM size cap in sync with the app's STREAM_SCAN_MAX_SIZE, which
+# defaults to MAX_UPLOAD_SIZE (512M): every accepted upload then goes via INSTREAM and
+# clamd never has to read an app-owned file (avoids "Access denied" when the clamd user
+# cannot traverse /data). Set STREAM_SCAN_MAX_SIZE lower to use file-based SCAN instead.
+STREAM_SCAN_MAX_SIZE="${STREAM_SCAN_MAX_SIZE:-${MAX_UPLOAD_SIZE:-536870912}}"
 sed -i -e "s/^#\\{0,1\\}StreamMaxLength.*/StreamMaxLength ${STREAM_SCAN_MAX_SIZE}/" /etc/clamav/clamd.conf
 { grep -q '^StreamMaxLength' /etc/clamav/clamd.conf || echo "StreamMaxLength ${STREAM_SCAN_MAX_SIZE}" >> /etc/clamav/clamd.conf; }
 

@@ -7,10 +7,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./clamtotal.db"
     upload_dir: str = "./uploads"
     max_upload_size: int = 512 * 1024 * 1024  # bytes
-    # files larger than this (but <= max_upload_size) are scanned via clamd's
-    # file-based SCAN command from a temp file instead of INSTREAM; clamd's own
-    # StreamMaxLength should match this value (the container entrypoint syncs it)
-    stream_scan_max_size: int = 100 * 1024 * 1024  # bytes
+    # INSTREAM size cap: files up to this size are streamed to clamd over the socket;
+    # clamd's own StreamMaxLength is synced to this value by the container entrypoint.
+    # Defaults to MAX_UPLOAD_SIZE so every accepted upload can use INSTREAM and clamd
+    # never needs to read an app-owned file from disk (which fails with "Access denied"
+    # when the clamd user cannot traverse the upload volume). Lower it to fall back to
+    # clamd's file-based SCAN for large files.
+    stream_scan_max_size: int = 512 * 1024 * 1024  # bytes
     # files larger than this are uploaded by the browser in chunks (POST /file/upload/chunk);
     # 0 disables chunked upload. Default 25M stays well under Cloudflare's 100M request-body
     # cap (free plan) even with multipart overhead and proxy buffers

@@ -202,11 +202,12 @@ def test_compose_persists_yara_rules():
 
 
 def test_clamd_stream_max_length_synced_with_stream_scan_max_size():
-    # clamd's INSTREAM cap must track STREAM_SCAN_MAX_SIZE (default 100M); larger files
-    # are scanned via clamd's file-based SCAN instead
+    # clamd's INSTREAM cap must track STREAM_SCAN_MAX_SIZE, which defaults to
+    # MAX_UPLOAD_SIZE (512M) so all uploads use INSTREAM and clamd never reads
+    # app-owned files; larger-than-cap files would use file-based SCAN instead
     ep = (ROOT / "container-entrypoint.sh").read_text()
     assert "StreamMaxLength ${STREAM_SCAN_MAX_SIZE}" in ep
-    assert "STREAM_SCAN_MAX_SIZE:-104857600" in ep
+    assert "STREAM_SCAN_MAX_SIZE:-${MAX_UPLOAD_SIZE:-536870912}" in ep
 
 
 def test_app_version_stamped_at_build_time():

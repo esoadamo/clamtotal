@@ -112,7 +112,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `DATABASE_URL` | `sqlite:///./clamtotal.db` | SQLAlchemy URL |
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
 | `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
-| `STREAM_SCAN_MAX_SIZE` | `104857600` | files larger than this (but ≤ `MAX_UPLOAD_SIZE`) are scanned via clamd's file-based SCAN from a temp file instead of INSTREAM; the container syncs clamd's `StreamMaxLength` to this value |
+| `STREAM_SCAN_MAX_SIZE` | `536870912` (= `MAX_UPLOAD_SIZE`) | INSTREAM size cap for clamd; the container syncs clamd's `StreamMaxLength` to this value, so all uploads scan via INSTREAM and clamd never needs to read app-owned files (avoids `Access denied` on the upload volume). Lower it to scan larger files via clamd's file-based SCAN |
 | `WS_UPLOAD_ENABLED` | `true` | enable the WebSocket chunked-upload endpoint (`/file/upload/ws`); the browser uses it by default and falls back to HTTP chunks on failure |
 | `WS_CHUNK_SIZE` | `1048576` (1 MB) | client-side WebSocket frame size in bytes; `0` disables the WS endpoint |
 | `CHUNK_UPLOAD_SIZE` | `26214400` (25 MB) | files larger than this are uploaded by the browser in chunks (`POST /file/upload/chunk`); `0` disables chunked upload. The client also retries with 25 MB chunks automatically on a 413 from a proxy (e.g. Cloudflare) |
