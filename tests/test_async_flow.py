@@ -262,6 +262,21 @@ def test_scan_and_store_raises_when_no_engines_available(client, monkeypatch):
             main_module._scan_and_store(db, None, b"x", "none.bin", False)
 
 
+def test_require_any_engine_raises_when_none_available(monkeypatch):
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: None)
+    with pytest.raises(ScannerUnavailableError, match="no scan engines"):
+        main_module._require_any_engine(None)
+
+
+def test_require_any_engine_ok_with_yara_only(monkeypatch, tmp_path):
+    from app.scanner import YaraScanner
+
+    (tmp_path / "r.yar").write_text("rule R { condition: true }")
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
+    assert main_module._require_any_engine(None) is None
+    assert main_module._require_any_engine(fake_scanner) is fake_scanner
+
+
 def test_upload_twice_second_is_cached_200(client):
     content = b"cached async upload"
     first = client.post("/file/upload", files={"file": ("c.bin", content)})

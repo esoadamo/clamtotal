@@ -346,6 +346,19 @@ def test_upload_scanner_unavailable_503(client, monkeypatch):
         app.dependency_overrides[get_scanner] = lambda: fake_scanner
 
 
+def test_upload_no_engine_available_503(client, monkeypatch):
+    # e.g. ENABLED_SCANNERS=yara without YARA_RULES_DIR: fail fast instead of
+    # leaving the scan 'pending' forever
+    import app.main as main_module
+    from app.main import app
+
+    monkeypatch.setitem(app.dependency_overrides, get_scanner, lambda: None)
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: None)
+    response = client.post("/file/upload", files={"file": ("x.bin", b"data")})
+    assert response.status_code == 503
+    assert "no scan engines" in response.json()["detail"]
+
+
 def test_api_upload_empty_400(client):
     assert client.post("/api/v2/files", files={"file": ("e.bin", b"")}).status_code == 400
 

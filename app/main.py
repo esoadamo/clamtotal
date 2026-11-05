@@ -243,6 +243,17 @@ def _lookup(db: Session, hash_value: str) -> Scan | None:
     ).scalar_one_or_none()
 
 
+def _require_any_engine(scanner: Scanner | None = Depends(get_scanner)) -> Scanner | None:
+    """Upload fail-fast: 503 when no scan engine is enabled AND available, so an upload
+    never gets stuck 'pending' forever (e.g. ENABLED_SCANNERS=yara without YARA_RULES_DIR,
+    or both engines disabled). ClamAV enabled but down still raises from get_scanner()."""
+    if scanner is None and get_yara_scanner() is None:
+        raise ScannerUnavailableError(
+            "no scan engines enabled/available (check ENABLED_SCANNERS and YARA_RULES_DIR)"
+        )
+    return scanner
+
+
 def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
     """Initial per-engine progress rows (all "scanning") for a freshly enqueued scan.
     The ClamAV engine name comes from the active scanner when one is already resolved
@@ -543,7 +554,9 @@ async def upload(
     file: UploadFile = File(...),
     rescan: bool = False,
     db: Session = Depends(get_db),
-    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
+    scanner: Scanner | None = Depends(
+        _require_any_engine
+    ),  # 503 when no engine is enabled+available
 ) -> JSONResponse:
     _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()
@@ -606,7 +619,9 @@ async def upload_chunk(
     total: int = Form(...),
     name: str = Form(""),
     db: Session = Depends(get_db),
-    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
+    scanner: Scanner | None = Depends(
+        _require_any_engine
+    ),  # 503 when no engine is enabled+available
 ) -> JSONResponse:
     """Chunked upload for large files (behind proxies with request-body size limits).
     Chunks are stored under UPLOAD_DIR/.chunks/<sha256>/; when the last one arrives the
@@ -672,7 +687,9 @@ async def upload_chunk(
 async def upload_ws(
     websocket: WebSocket,
     db: Session = Depends(get_db),
-    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
+    scanner: Scanner | None = Depends(
+        _require_any_engine
+    ),  # 503 when no engine is enabled+available
 ) -> None:
     # Chunked upload over one persistent WebSocket: small binary frames and no
     # per-request proxy body cap / ~100s timeout (Cloudflare limits that bite HTTP
@@ -854,7 +871,9 @@ def rescan(
     background_tasks: BackgroundTasks,
     hash_value: str,
     db: Session = Depends(get_db),
-    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
+    scanner: Scanner | None = Depends(
+        _require_any_engine
+    ),  # 503 when no engine is enabled+available
 ) -> RedirectResponse:
     scan = _lookup(db, hash_value)
     stored = Path(settings.upload_dir) / scan.sha256 if scan else None
@@ -936,7 +955,9 @@ async def api_scan(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    scanner: Scanner | None = Depends(get_scanner),  # None if ClamAV off via ENABLED_SCANNERS
+    scanner: Scanner | None = Depends(
+        _require_any_engine
+    ),  # 503 when no engine is enabled+available
 ) -> JSONResponse:
     _rate_limit(request, settings.rate_limit_upload, "upload")
     data = await file.read()
