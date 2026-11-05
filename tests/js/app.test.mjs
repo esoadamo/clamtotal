@@ -194,6 +194,41 @@ test('chunkProgressPct reports overall file percentage across chunks', () => {
   assert.equal(CT.chunkProgressPct(0, 0, 0), 100);                // empty file
 });
 
+test('formatBytes renders human-readable sizes', () => {
+  assert.equal(CT.formatBytes(0), '0 B');
+  assert.equal(CT.formatBytes(512), '512 B');
+  assert.equal(CT.formatBytes(2048), '2 KB');
+  assert.equal(CT.formatBytes(25 * 1024 * 1024), '25 MB');
+  assert.equal(CT.formatBytes(1.5 * 1024 * 1024), '1.5 MB');
+  assert.equal(CT.formatBytes(3 * 1024 * 1024 * 1024), '3 GB');
+  assert.equal(CT.formatBytes(-5), '0 B');
+  assert.equal(CT.formatBytes(NaN), '0 B');
+});
+
+test('formatEta renders durations', () => {
+  assert.equal(CT.formatEta(0), '0s');
+  assert.equal(CT.formatEta(42.4), '42s');
+  assert.equal(CT.formatEta(65), '1m 05s');
+  assert.equal(CT.formatEta(3600 + 60 + 2), '1h 01m');
+  assert.equal(CT.formatEta(Infinity), '--');
+  assert.equal(CT.formatEta(-3), '--');
+});
+
+test('uploadStatsSuffix shows transferred bytes, speed and ETA', () => {
+  assert.equal(CT.uploadStatsSuffix(0, 1000, 0, 500), '');    // nothing sent yet
+  assert.equal(CT.uploadStatsSuffix(100, 1000, 0, 50), '');   // too early (<100ms)
+  // 150 MB in 10s -> 15 MB/s, 150 MB left -> ETA 10s
+  assert.equal(
+    CT.uploadStatsSuffix(150 * 1024 * 1024, 300 * 1024 * 1024, 0, 10000),
+    ' \u00b7 150 MB/300 MB \u00b7 15 MB/s \u00b7 ETA 10s'
+  );
+  // fully sent: ETA 0s
+  assert.equal(
+    CT.uploadStatsSuffix(300 * 1024 * 1024, 300 * 1024 * 1024, 0, 10000),
+    ' \u00b7 300 MB/300 MB \u00b7 30 MB/s \u00b7 ETA 0s'
+  );
+});
+
 test('runPool runs with bounded concurrency and ordered results', async () => {
   let active = 0, maxActive = 0;
   const items = Array.from({ length: 10 }, (_, i) => i);

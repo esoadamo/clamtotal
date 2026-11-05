@@ -37,7 +37,8 @@ Features (all fully offline, no login, no community features):
   analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`)
 - VT-style UX flow: the browser hashes the file (SHA-256) and checks
   `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
-  report; new files ask for confirmation, then upload with a progress bar and
+  report; new files ask for confirmation, then upload with a progress bar plus
+  live speed/ETA readout (whole-file and chunked uploads alike) and
   land on `/file/{hash}`, which shows a rotating spinner until the scan finishes.
   Files larger than `CHUNK_UPLOAD_SIZE` (default 25 MB) are uploaded in chunks
   via `POST /file/upload/chunk` (reassembled server-side and verified by SHA-256),

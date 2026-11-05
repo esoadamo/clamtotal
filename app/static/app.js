@@ -174,6 +174,37 @@
     return Math.min(100, Math.round(((doneBytes + inFlightBytes) / size) * 100));
   }
 
+  function formatBytes(n) {
+    if (!isFinite(n) || n < 0) return '0 B';
+    if (n < 1024) return Math.round(n) + ' B';
+    var units = ['KB', 'MB', 'GB', 'TB'];
+    var v = n, u = -1;
+    do { v /= 1024; u++; } while (v >= 1024 && u < units.length - 1);
+    return (u === 0 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + units[u];
+  }
+
+  function formatEta(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return '--';
+    var s = Math.round(seconds);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60);
+    s -= m * 60;
+    if (m < 60) return m + 'm ' + ('0' + s).slice(-2) + 's';
+    var h = Math.floor(m / 60);
+    return h + 'h ' + ('0' + (m - h * 60)).slice(-2) + 'm';
+  }
+
+  /* " · 135/300 MB · 3.2 MB/s · ETA 12s" appended to the upload status line;
+     empty until 100ms elapsed so the first paint doesn't show a bogus speed */
+  function uploadStatsSuffix(sentBytes, totalBytes, startMs, nowMs) {
+    var elapsedMs = nowMs - startMs;
+    if (elapsedMs < 100 || sentBytes <= 0) return '';
+    var speed = sentBytes / (elapsedMs / 1000);
+    var eta = totalBytes > sentBytes ? (totalBytes - sentBytes) / speed : 0;
+    return ' \u00b7 ' + formatBytes(sentBytes) + '/' + formatBytes(totalBytes) +
+      ' \u00b7 ' + formatBytes(speed) + '/s \u00b7 ETA ' + formatEta(eta);
+  }
+
   /* Retry an async fn up to `attempts` times on transient failures (err.transient),
      with a short delay between tries. Proxies like Cloudflare occasionally return
      524 (origin timeout) on long requests — those chunks must be retried, not fail
@@ -298,11 +329,13 @@
       var total = plan.length;
       var doneBytes = 0;         // bytes fully uploaded
       var inFlight = {};         // part.index -> bytes sent so far of that chunk
+      var startedAt = Date.now();
       function report() {
         var flying = Object.keys(inFlight).reduce(function (n, k) { return n + inFlight[k]; }, 0);
         var pct = chunkProgressPct(doneBytes, flying, file.size);
         if (bar) bar.style.width = pct + '%';
-        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
+        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
+          uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now());
       }
       report();
       // send chunks one at a time: through the Cloudflare tunnel the bandwidth is
@@ -355,13 +388,15 @@
       if (bar) bar.style.width = '0%';
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256);
+      var startedAt = Date.now();
       var xhr = new global.XMLHttpRequest();
       xhr.open('POST', form.action);
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable && bar && status) {
           var pct = Math.round((e.loaded / e.total) * 100);
           bar.style.width = pct + '%';
-          status.textContent = 'Uploading ' + file.name + '… ' + pct + '%';
+          status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
+            uploadStatsSuffix(e.loaded, e.total, startedAt, Date.now());
         }
       };
       xhr.upload.onload = function () { if (bar) bar.style.width = '100%'; };
@@ -440,6 +475,9 @@
     chunkPlan: chunkPlan,
     shouldUseChunks: shouldUseChunks,
     chunkProgressPct: chunkProgressPct,
+    formatBytes: formatBytes,
+    formatEta: formatEta,
+    uploadStatsSuffix: uploadStatsSuffix,
     runPool: runPool,
     withRetry: withRetry,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
