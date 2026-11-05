@@ -63,11 +63,11 @@ test('initPolling polls and reloads when done', async () => {
   let calls = 0;
   let reloaded = false;
   let cleared = false;
-  const el = { dataset: { sha: 'ab'.repeat(32), interval: '5' } };
-  globalThis.document = { getElementById: (id) => (id === 'pending-data' ? el : null) };
+  const el = { dataset: { sha: 'ab'.repeat(32), interval: '5', key: '0:0' } };
+  globalThis.document = { getElementById: (id) => (id === 'scan-progress' ? el : null) };
   globalThis.fetch = async () => {
     calls += 1;
-    return { json: async () => ({ status: calls >= 2 ? 'done' : 'pending' }) };
+    return { json: async () => ({ status: calls >= 2 ? 'done' : 'pending', engines: [] }) };
   };
   let intervalId = null;
   globalThis.setInterval = (fn, ms) => { intervalId = { fn, ms }; return 1; };
@@ -299,19 +299,20 @@ test('escapeHtml escapes markup-significant characters', () => {
 
 test('engineRowHtml renders a spinner while scanning, verdicts when done', () => {
   const scanning = CT.engineRowHtml({ name: 'ClamAV (clamd)', status: 'scanning' }, 0);
+  assert.match(scanning, /^<tr data-engine="0">/);
   assert.match(scanning, /class="spinner engine-spinner"/);
   assert.match(scanning, /Scanning…/);
   assert.match(scanning, /ClamAV \(clamd\)/);
-  assert.match(scanning, /data-engine="0"/);
 
   const clean = CT.engineRowHtml({ name: 'YARA (local rules)', status: 'done', verdict: 'clean', signature: null }, 1);
+  assert.match(clean, /<tr data-engine="1">/);
   assert.match(clean, /Undetected/);
   assert.match(clean, /#39ac4c/);
   assert.doesNotMatch(clean, /engine-spinner/);
 
   const bad = CT.engineRowHtml({ name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' }, 2);
   assert.match(bad, /Win\.Test\.EICAR_HDB-1/);
-  assert.match(bad, /engine-result flag/);
+  assert.match(bad, /<span class="flag">/);
   assert.match(bad, /#c52420/);
 
   // engine names/signatures are escaped, never injected as HTML
@@ -321,50 +322,80 @@ test('engineRowHtml renders a spinner while scanning, verdicts when done', () =>
   assert.match(evil, /&lt;script&gt;/);
 });
 
-test('updateEngineProgress re-renders one row per engine and is null-safe', () => {
+test('engineStateHtml/engineResultHtml cover scanning, clean and infected', () => {
+  assert.match(CT.engineStateHtml({ status: 'scanning' }), /engine-spinner/);
+  assert.match(CT.engineStateHtml({ status: 'done', verdict: 'clean' }), /#39ac4c/);
+  assert.match(CT.engineStateHtml({ status: 'done', verdict: 'infected' }), /#c52420/);
+  assert.match(CT.engineResultHtml({ status: 'scanning' }), /Scanning…/);
+  assert.match(CT.engineResultHtml({ status: 'done', verdict: 'clean' }), /Undetected/);
+  assert.match(CT.engineResultHtml({ status: 'done', verdict: 'infected', signature: 'Sig-1' }), /Sig-1/);
+});
+
+test('updateDetectionEngines re-renders one row per engine and is null-safe', () => {
   delete globalThis.document;
-  assert.doesNotThrow(() => CT.updateEngineProgress([{ name: 'x', status: 'scanning' }]));
-  assert.doesNotThrow(() => CT.updateEngineProgress(null));
-  assert.doesNotThrow(() => CT.updateEngineProgress('nope'));
+  assert.doesNotThrow(() => CT.updateDetectionEngines([{ name: 'x', status: 'scanning' }]));
+  assert.doesNotThrow(() => CT.updateDetectionEngines(null));
+  assert.doesNotThrow(() => CT.updateDetectionEngines('nope'));
 
   const box = { innerHTML: '' };
-  globalThis.document = { getElementById: (id) => (id === 'engine-progress' ? box : null) };
-  CT.updateEngineProgress([
+  globalThis.document = { getElementById: (id) => (id === 'detection-engines' ? box : null) };
+  CT.updateDetectionEngines([
     { name: 'ClamAV (clamd)', status: 'done', verdict: 'clean', signature: null },
     { name: 'YARA (local rules)', status: 'scanning' },
   ]);
-  assert.equal((box.innerHTML.match(/class="engine-row"/g) || []).length, 2);
+  assert.equal((box.innerHTML.match(/<tr data-engine=/g) || []).length, 2);
   assert.match(box.innerHTML, /Undetected/);
   assert.match(box.innerHTML, /engine-spinner/);
 
-  CT.updateEngineProgress([]); // empty list leaves the current rows alone
+  CT.updateDetectionEngines([]); // empty list leaves the current rows alone
   assert.match(box.innerHTML, /Undetected/);
   delete globalThis.document;
 });
 
-test('initPolling updates per-engine rows while pending, reloads when done', async () => {
+test('progressKey tracks done engines and committed analysis', () => {
+  assert.equal(CT.progressKey({ engines: [], behavior: null }), '0:0');
+  assert.equal(
+    CT.progressKey({
+      engines: [{ status: 'done' }, { status: 'scanning' }],
+      behavior: { suspicious_strings: [] },
+    }),
+    '1:1'
+  );
+  assert.equal(CT.progressKey({ status: 'pending' }), '0:0'); // missing fields are safe
+});
+
+test('initPolling updates engine rows in place, reloads on new sections and when done', async () => {
   let calls = 0;
   let reloaded = false;
   let cleared = false;
-  const pendingEl = { dataset: { sha: 'ab'.repeat(32), interval: '5' } };
+  const progressEl = { dataset: { sha: 'ab'.repeat(32), interval: '5', key: '0:0' } };
   const box = { innerHTML: '' };
   globalThis.document = {
-    getElementById: (id) => ({ 'pending-data': pendingEl, 'engine-progress': box }[id] || null),
+    getElementById: (id) => ({ 'scan-progress': progressEl, 'detection-engines': box }[id] || null),
   };
+  const responses = [
+    { // poll 1: ClamAV done (key 1:0 != rendered 0:0) -> reload to re-render
+      status: 'pending',
+      engines: [
+        { name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' },
+        { name: 'YARA (local rules)', status: 'scanning' },
+      ],
+      behavior: null,
+    },
+    { // poll 2: key unchanged (0 done engines, no analysis) -> in-place update only
+      status: 'pending',
+      engines: [
+        { name: 'ClamAV (clamd)', status: 'scanning' },
+        { name: 'YARA (local rules)', status: 'scanning' },
+      ],
+      behavior: null,
+    },
+    { status: 'done', engines: [] }, // poll 3: scan finished -> reload
+  ];
   globalThis.fetch = async () => {
+    const body = responses[Math.min(calls, responses.length - 1)];
     calls += 1;
-    if (calls === 1) {
-      return {
-        json: async () => ({
-          status: 'pending',
-          engines: [
-            { name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' },
-            { name: 'YARA (local rules)', status: 'scanning' },
-          ],
-        }),
-      };
-    }
-    return { json: async () => ({ status: 'done', engines: [] }) };
+    return { json: async () => body };
   };
   let intervalId = null;
   globalThis.setInterval = (fn, ms) => { intervalId = { fn, ms }; return 1; };
@@ -372,14 +403,54 @@ test('initPolling updates per-engine rows while pending, reloads when done', asy
   Object.defineProperty(globalThis, 'location', { value: { reload: () => { reloaded = true; } }, configurable: true });
 
   CT.initPolling();
-  await intervalId.fn(); // first poll: ClamAV done, YARA still scanning
+  await intervalId.fn(); // poll 1: key changed (engine finished) -> reload
+  assert.equal(reloaded, true);
+  assert.equal(cleared, true);
+
+  reloaded = false; cleared = false;
+  box.innerHTML = '';
+  await intervalId.fn(); // poll 2: key unchanged -> rows updated in place, no reload
   assert.equal(reloaded, false);
-  assert.equal(cleared, false);
+  assert.equal((box.innerHTML.match(/engine-spinner/g) || []).length, 2); // both still spinning
+  assert.match(box.innerHTML, /ClamAV \(clamd\)/);
+
+  await intervalId.fn(); // poll 3: done -> reload
+  assert.equal(reloaded, true);
+
+  delete globalThis.document;
+  delete globalThis.fetch;
+  delete globalThis.setInterval;
+  delete globalThis.clearInterval;
+  delete globalThis.location;
+});
+
+test('initPolling updates engine rows in place when nothing new was committed', async () => {
+  let reloaded = false;
+  const progressEl = { dataset: { sha: 'cd'.repeat(32), interval: '5', key: '1:0' } };
+  const box = { innerHTML: '' };
+  globalThis.document = {
+    getElementById: (id) => ({ 'scan-progress': progressEl, 'detection-engines': box }[id] || null),
+  };
+  globalThis.fetch = async () => ({
+    json: async () => ({
+      status: 'pending',
+      engines: [
+        { name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' },
+        { name: 'YARA (local rules)', status: 'scanning' },
+      ],
+      behavior: null, // key 1:0 matches the rendered data-key
+    }),
+  });
+  let intervalId = null;
+  globalThis.setInterval = (fn, ms) => { intervalId = { fn, ms }; return 1; };
+  globalThis.clearInterval = () => {};
+  Object.defineProperty(globalThis, 'location', { value: { reload: () => { reloaded = true; } }, configurable: true });
+
+  CT.initPolling();
+  await intervalId.fn(); // key 1:0 == rendered key -> rows updated, no reload
+  assert.equal(reloaded, false);
   assert.match(box.innerHTML, /Win\.Test\.EICAR_HDB-1/);
   assert.match(box.innerHTML, /engine-spinner/); // YARA row still spinning
-  await intervalId.fn(); // second poll: scan done -> reload
-  assert.equal(cleared, true);
-  assert.equal(reloaded, true);
 
   delete globalThis.document;
   delete globalThis.fetch;

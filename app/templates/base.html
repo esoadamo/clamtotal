@@ -165,10 +165,8 @@
     animation: ct-spin 0.8s linear infinite;
   }
   @keyframes ct-spin { to { transform: rotate(360deg); } }
-  /* per-engine live progress on the pending report page (VT-style spinner per engine) */
-  #engine-progress { margin-top: 24px; display: inline-block; text-align: left; }
-  .engine-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; min-width: 320px; }
-  .engine-state { width: 20px; display: inline-flex; justify-content: center; flex: none; }
+  /* per-engine live progress in the Detection table (VT-style spinner per engine) */
+  .engine-state { width: 40px; }
   .engine-spinner { width: 18px; height: 18px; border-width: 3px; margin: 0; }
   .engine-name { font-weight: 500; }
   .engine-result { font-size: 13px; word-break: break-all; }

@@ -336,6 +336,19 @@ def _scan_and_store(
             behavior["office"] = office
         behavior["archive_members"] = list_archive_members(data)
 
+    # commit the offline analysis (extended hashes, urls, iocs, behavior) while the
+    # scan is still pending, so the report page fills in the tabs progressively
+    urls = extract_urls(data)
+    iocs = extract_iocs(data)
+    scan.sha512 = hashes["sha512"]
+    scan.crc32 = hashes["crc32"]
+    scan.file_type = file_type
+    scan.magic_hex = magic_hex
+    scan.urls = urls
+    scan.iocs = iocs
+    scan.behavior = behavior
+    db.commit()
+
     embedded: list[dict] = []
     if depth < settings.max_scan_depth:
         for member_name, member_data in extract_embedded_files(data, settings.max_embedded_files):
@@ -363,10 +376,10 @@ def _scan_and_store(
         status="done",
         signature=signature,
         engine=result.engine,
-        urls=extract_urls(data),
+        urls=urls,
         raw_output=result.raw,
         engines=engines,
-        iocs=extract_iocs(data),
+        iocs=iocs,
         behavior=behavior,
         embedded=embedded,
     )

@@ -78,19 +78,33 @@ def test_pending_report_contract(client, monkeypatch):
         )
         db.commit()
     page = client.get(f"/ui/file/{sha}").text
-    assert 'id="pending-data"' in page
+    assert 'id="scan-progress"' in page
     assert f'data-sha="{sha}"' in page
     assert 'data-interval="4321"' in page
-    assert "Scanning fe.bin" in page
+    assert 'data-key="1:0"' in page  # one engine done, analysis not committed yet
     assert "vt-spin" not in page and "ct-spin" in page
-    # VT-style per-engine progress: one row per engine, spinner while scanning,
-    # verdict as soon as the engine finished
-    assert 'id="engine-progress"' in page
-    assert page.count('class="engine-row"') == 2
+    # the full results page renders immediately; while scanning, the Detection tab
+    # shows one row per engine (spinner while scanning, verdict once done) and the
+    # other tabs show placeholders that fill in as the scan progresses
+    for marker in [
+        'class="tabs"',
+        'data-tab="detection"',
+        'data-tab="details"',
+        'data-tab="behavior"',
+        'data-tab="network"',
+        "det-widget",
+        "ring-num",
+    ]:
+        assert marker in page, marker
+    assert 'id="detection-engines"' in page
+    assert page.count("<tr data-engine=") == 2
     assert "ClamAV (fake)" in page and "YARA (local rules)" in page
     assert "Undetected" in page  # done + clean
     assert "Scanning…" in page  # still scanning
     assert "engine-spinner" in page
+    assert "Scanning… 1 of 2 engines finished" in page
+    assert page.count("Analysis in progress…") == 2  # Behavior + Network placeholders
+    assert "fe.bin" in page and sha in page  # header details are there from the start
 
 
 def test_pending_report_without_engines_shows_generic_row(client):
@@ -116,9 +130,10 @@ def test_pending_report_without_engines_shows_generic_row(client):
         )
         db.commit()
     page = client.get(f"/ui/file/{sha}").text
-    assert 'id="engine-progress"' in page
-    assert page.count('class="engine-row"') == 1  # fallback row when no engine list yet
+    assert 'id="detection-engines"' in page
+    assert page.count("<tr data-engine=") == 1  # fallback row when no engine list yet
     assert "Analysis engines" in page
+    assert 'data-key="0:0"' in page
 
 
 def test_done_report_contract(client):

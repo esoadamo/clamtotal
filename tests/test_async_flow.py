@@ -33,10 +33,14 @@ def test_pending_report_page_shows_spinner_and_polls(client):
         db.commit()
     page = client.get(f"/ui/file/{sha}")
     assert page.status_code == 200
-    assert "Scanning pending.bin" in page.text
-    assert 'id="pending-data"' in page.text  # app.js polls /api/v2/files/{sha} until done
-    assert 'id="engine-progress"' in page.text  # per-engine rows while scanning
-    assert page.text.count('class="engine-row"') == 2
+    # the full report page renders immediately; app.js polls /api/v2/files/{sha}
+    # and fills in per-engine rows + sections as they are committed
+    assert 'id="scan-progress"' in page.text
+    assert f'data-sha="{sha}"' in page.text
+    assert 'id="detection-engines"' in page.text
+    assert page.text.count("<tr data-engine=") == 2
+    assert 'data-tab="details"' in page.text  # details tabs present while scanning
+    assert "Analysis in progress…" in page.text
     api = client.get(f"/api/v2/files/{sha}").json()
     assert api["status"] == "pending"
     assert [e["status"] for e in api["engines"]] == ["scanning", "scanning"]
@@ -69,6 +73,35 @@ def test_engine_results_committed_as_they_arrive(client):
     assert scan.engines == [
         {"name": "ClamAV (slow)", "status": "done", "verdict": "clean", "signature": None}
     ]
+
+
+def test_analysis_committed_while_still_pending(client, monkeypatch):
+    """After the engines finish, the offline analysis (behavior/iocs/urls/extended
+    hashes) is committed while status is still 'pending', so the report page can
+    fill in the Details/Behavior/Network tabs before the scan completes."""
+    content = b"progressive analysis sample http://203.0.113.5/x"
+    sha = hashlib.sha256(content).hexdigest()
+    observed: dict = {}
+    real_extract = main_module.extract_embedded_files
+
+    def peek_extract(data, limit):
+        with SessionLocal() as db:  # separate session sees the committed stage
+            row = db.get(Scan, sha)
+            assert row is not None
+            observed["status"] = row.status
+            observed["behavior"] = row.behavior is not None
+            observed["iocs"] = row.iocs is not None
+            observed["urls"] = row.urls
+            observed["sha512"] = row.sha512 is not None
+        return real_extract(data, limit)
+
+    monkeypatch.setattr(main_module, "extract_embedded_files", peek_extract)
+    with SessionLocal() as db:
+        scan, _ = main_module._scan_and_store(db, fake_scanner, content, "prog.bin", False)
+    assert observed["status"] == "pending"  # analysis committed before status flips
+    assert observed["behavior"] and observed["iocs"] and observed["sha512"]
+    assert observed["urls"] == ["http://203.0.113.5/x"]
+    assert scan.status == "done"
 
 
 def test_engine_progress_includes_yara_when_available(client, monkeypatch, tmp_path):

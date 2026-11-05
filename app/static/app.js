@@ -259,37 +259,49 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  /* VT-style per-engine progress row: a spinning circle while the engine scans,
-     swapped for a flag/check + verdict the moment the result arrives. */
-  function engineRowHtml(e, i) {
-    var state, result, cls;
+  /* VT-style per-engine Detection-table row: a spinning circle while the engine
+     scans, swapped for a flag/check + verdict the moment the result arrives. */
+  function engineStateHtml(e) {
     if (e && e.status === 'done') {
-      if (e.verdict === 'infected') {
-        state = '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#c52420" d="M14.4 6 14 4H5v17h2v-7h5.6l-.4 2h7V6z"/></svg>';
-        result = escapeHtml(e.signature || 'infected');
-        cls = 'flag';
-      } else {
-        state = '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#39ac4c" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
-        result = 'Undetected';
-        cls = 'muted';
-      }
-    } else {
-      state = '<div class="spinner engine-spinner"></div>';
-      result = 'Scanning…';
-      cls = 'muted';
+      return e.verdict === 'infected'
+        ? '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#c52420" d="M14.4 6 14 4H5v17h2v-7h5.6l-.4 2h7V6z"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#39ac4c" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
     }
-    return '<div class="engine-row" data-engine="' + i + '">' +
-      '<span class="engine-state">' + state + '</span>' +
-      '<span class="engine-name">' + escapeHtml((e && e.name) || 'engine') + '</span>' +
-      '<span class="engine-result ' + cls + '">' + result + '</span></div>';
+    return '<div class="spinner engine-spinner"></div>';
   }
 
-  /* Re-render the per-engine progress list from the polled report (results land
-     one engine at a time; the page reloads once the whole scan is done). */
-  function updateEngineProgress(engines) {
-    var box = $('engine-progress');
+  function engineResultHtml(e) {
+    if (e && e.status === 'done') {
+      return e.verdict === 'infected'
+        ? '<span class="flag">' + escapeHtml(e.signature || 'infected') + '</span>'
+        : '<span class="muted">Undetected</span>';
+    }
+    return '<span class="muted">Scanning…</span>';
+  }
+
+  function engineRowHtml(e, i) {
+    return '<tr data-engine="' + i + '">' +
+      '<td class="engine-state">' + engineStateHtml(e) + '</td>' +
+      '<td class="engine-name" style="font-weight:500">' + escapeHtml((e && e.name) || 'engine') + '</td>' +
+      '<td class="engine-result">' + engineResultHtml(e) + '</td></tr>';
+  }
+
+  /* Re-render the per-engine Detection rows from the polled report (verdicts land
+     one engine at a time, without reloading the page). */
+  function updateDetectionEngines(engines) {
+    var box = $('detection-engines');
     if (!box || !Array.isArray(engines) || !engines.length) return;
     box.innerHTML = engines.map(engineRowHtml).join('');
+  }
+
+  /* Fingerprint of what the server has committed so far (done engines + analysis
+     sections); when it changes, the page reloads to pick up the new details.
+     Must stay in sync with the data-key attribute rendered by report.html. */
+  function progressKey(data) {
+    var done = Array.isArray(data.engines)
+      ? data.engines.filter(function (e) { return e.status === 'done'; }).length
+      : 0;
+    return done + ':' + (data.behavior ? 1 : 0);
   }
 
   function $(id) { return global.document ? global.document.getElementById(id) : null; }
@@ -320,10 +332,11 @@
   }
 
   function initPolling() {
-    var el = $('pending-data');
+    var el = $('scan-progress');
     if (!el) return;
     var sha = el.dataset.sha;
     var interval = parseInt(el.dataset.interval || '3000', 10);
+    var key = el.dataset.key || '';
     var timer = global.setInterval(function () {
       return global.fetch('/api/v2/files/' + sha)
         .then(function (r) { return r.json(); })
@@ -331,8 +344,12 @@
           if (data.status === 'done') {
             global.clearInterval(timer);
             global.location.reload();
-          } else {
-            updateEngineProgress(data.engines); // per-engine verdicts as they arrive
+            return;
+          }
+          updateDetectionEngines(data.engines); // per-engine verdicts as they arrive
+          if (progressKey(data) !== key) { // new section committed -> re-render
+            global.clearInterval(timer);
+            global.location.reload();
           }
         })
         .catch(function () {});
@@ -632,7 +649,10 @@
     defang: defang,
     escapeHtml: escapeHtml,
     engineRowHtml: engineRowHtml,
-    updateEngineProgress: updateEngineProgress,
+    engineStateHtml: engineStateHtml,
+    engineResultHtml: engineResultHtml,
+    updateDetectionEngines: updateDetectionEngines,
+    progressKey: progressKey,
     openModal: openModal,
     closeModal: closeModal,
     initTabs: initTabs,
