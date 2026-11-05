@@ -76,14 +76,16 @@ class ClamdScanner:
         return self._scan_stream(data)
 
     def _scan_fd(self, path: Path) -> ScanResult:
-        """Scan via FD_PASS over the Unix socket: the fd is passed with SCM_RIGHTS and
-        clamd reads the file itself — no StreamMaxLength cap, no app-file permission
-        issues, works for multi-GB samples."""
+        """Scan via FILDES over the Unix socket: after the zFILDES command a second
+        packet (one dummy byte) carries the fd in SCM_RIGHTS ancillary data, and clamd
+        reads the file itself — no StreamMaxLength cap, no app-file permission issues,
+        works for multi-GB samples."""
         fd = os.open(path, os.O_RDONLY)
         try:
             with self._connect() as sock:
+                sock.sendmsg([b"zFILDES\0"], [])
                 sock.sendmsg(
-                    [b"zFD_PASS\0"],
+                    [b"\0"],
                     [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack("i", fd))],
                 )
                 response = b""

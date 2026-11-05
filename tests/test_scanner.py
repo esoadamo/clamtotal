@@ -65,7 +65,7 @@ class FdPassSocket(FakeSocket):
 
 
 def test_clamd_fdpass_over_unix_socket(monkeypatch, tmp_path):
-    # with CLAMD_SOCKET set and a stored path, scan() uses FD_PASS (SCM_RIGHTS),
+    # with CLAMD_SOCKET set and a stored path, scan() uses FILDES (fd via SCM_RIGHTS),
     # bypassing both StreamMaxLength and app-file permission issues
     monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
     monkeypatch.setattr(settings, "stream_scan_max_size", 8)  # data alone would exceed it
@@ -75,7 +75,8 @@ def test_clamd_fdpass_over_unix_socket(monkeypatch, tmp_path):
     monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
     result = ClamdScanner().scan(b"x" * 100, path=p)
     assert result.verdict == "clean"
-    assert fake.msgs == [b"zFD_PASS\x00"]
+    # zFILDES command first, then a dummy-byte packet carrying the fd via SCM_RIGHTS
+    assert fake.msgs == [b"zFILDES\x00", b"\x00"]
     assert any(c[0] == socket.SOL_SOCKET and c[1] == socket.SCM_RIGHTS for c in fake.cmsgs)
 
 

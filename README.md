@@ -119,7 +119,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `APP_VERSION` | build stamp | version shown in the page footer; the container image sets it at build time to `YYMMDD.hhmmss` UTC (`/app/.build-version`) |
 | `CLAM_MODE` | `auto` | `auto`, `daemon` (aliases `clamd`/`tcp`), or `cli` (clamscan); any other value fails startup |
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |
-| `CLAMD_SOCKET` | `/tmp/clamd.sock` in the container | Unix socket for clamd; when set, stored samples are scanned via `FD_PASS` (fd passed with `SCM_RIGHTS`), so no `StreamMaxLength` cap and no file-permission issues — multi-GB files work when `MAX_UPLOAD_SIZE` is raised |
+| `CLAMD_SOCKET` | `/tmp/clamd.sock` in the container | Unix socket for clamd; when set, stored samples are scanned via `FILDES` (fd passed with `SCM_RIGHTS`), so no `StreamMaxLength` cap and no file-permission issues — multi-GB files work when `MAX_UPLOAD_SIZE` is raised |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
