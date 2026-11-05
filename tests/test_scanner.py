@@ -1,8 +1,10 @@
 import os
 import shutil
 import socket
+import stat
 import struct
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -92,14 +94,17 @@ def test_clamd_unexpected_response(monkeypatch):
 def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
     # above STREAM_SCAN_MAX_SIZE the sample goes through zSCAN <path>, not INSTREAM
     monkeypatch.setattr(settings, "stream_scan_max_size", 8)
-    monkeypatch.setattr(
-        tempfile,
-        "mkstemp",
-        lambda prefix="": (
+    scan_dir = Path(settings.upload_dir) / ".clamd-scan"
+    mkstemp_calls: list[dict] = []
+
+    def fake_mkstemp(prefix="", dir=None):
+        mkstemp_calls.append({"prefix": prefix, "dir": dir})
+        return (
             os.open(str(tmp_path / "s.bin"), os.O_CREAT | os.O_WRONLY),
             str(tmp_path / "s.bin"),
-        ),
-    )
+        )
+
+    monkeypatch.setattr(tempfile, "mkstemp", fake_mkstemp)
 
     class RecordingSocket(FakeSocket):
         def __init__(self):
@@ -108,6 +113,9 @@ def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
 
         def sendall(self, data: bytes) -> None:
             self.cmds.append(data)
+            # by the time clamd is asked to SCAN, the temp file must be world-readable
+            # (clamd usually runs as a different user than the app)
+            assert stat.S_IMODE(os.stat(tmp_path / "s.bin").st_mode) == 0o644
             super().sendall(data)
 
     fake = RecordingSocket()
@@ -116,6 +124,29 @@ def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
     assert result.verdict == "infected" and result.signature == "Win.Test.EICAR_HDB-1"
     assert fake.cmds[0].startswith(b"zSCAN ")  # file-based command, not zINSTREAM
     assert not (tmp_path / "s.bin").exists()  # temp file removed after scan
+    # temp file lives in UPLOAD_DIR/.clamd-scan (traversable by the clamd user), not /tmp
+    assert mkstemp_calls[0]["dir"] == scan_dir
+    assert scan_dir.is_dir()
+
+
+def test_clamd_large_file_access_denied_has_clear_error(monkeypatch, tmp_path):
+    # clamd running as another user cannot read a 0600 /tmp file -> "Access denied. ERROR"
+    monkeypatch.setattr(settings, "stream_scan_max_size", 4)
+    monkeypatch.setattr(
+        tempfile,
+        "mkstemp",
+        lambda prefix="", dir=None: (
+            os.open(str(tmp_path / "a.bin"), os.O_CREAT | os.O_WRONLY),
+            str(tmp_path / "a.bin"),
+        ),
+    )
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda addr, timeout=None: FakeSocket(b"/x: Access denied. ERROR\x00"),
+    )
+    with pytest.raises(ScannerUnavailableError, match="clamd cannot read the temp scan file"):
+        ClamdScanner().scan(b"12345")
 
 
 def test_clamd_large_file_clean_via_temp_file(monkeypatch, tmp_path):
@@ -123,7 +154,7 @@ def test_clamd_large_file_clean_via_temp_file(monkeypatch, tmp_path):
     monkeypatch.setattr(
         tempfile,
         "mkstemp",
-        lambda prefix="": (
+        lambda prefix="", dir=None: (
             os.open(str(tmp_path / "c.bin"), os.O_CREAT | os.O_WRONLY),
             str(tmp_path / "c.bin"),
         ),
@@ -140,7 +171,7 @@ def test_clamd_large_file_size_limit_and_unexpected(monkeypatch, tmp_path):
     monkeypatch.setattr(
         tempfile,
         "mkstemp",
-        lambda prefix="": (
+        lambda prefix="", dir=None: (
             os.open(str(tmp_path / "x.bin"), os.O_CREAT | os.O_WRONLY),
             str(tmp_path / "x.bin"),
         ),

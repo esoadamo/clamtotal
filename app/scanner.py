@@ -75,11 +75,17 @@ class ClamdScanner:
 
     def _scan_file(self, data: bytes) -> ScanResult:
         """Scan a large sample via clamd's file-based SCAN command (INSTREAM is
-        capped by clamd's StreamMaxLength). The temp file is removed afterwards."""
-        fd, path = tempfile.mkstemp(prefix="clamtotal-scan-")
+        capped by clamd's StreamMaxLength). clamd usually runs as a different user
+        (e.g. "clamav" in the container), so the temp file must live in a directory
+        it can traverse and be world-readable — a 0600 file in /tmp makes clamd
+        answer "Access denied. ERROR". The temp file is removed afterwards."""
+        scan_dir = Path(settings.upload_dir) / ".clamd-scan"
+        scan_dir.mkdir(parents=True, exist_ok=True, mode=0o755)  # clamd may run as another user
+        fd, path = tempfile.mkstemp(prefix="clamtotal-scan-", dir=scan_dir)
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
+            os.chmod(path, 0o644)  # mkstemp creates 0600; clamd must be able to read it
             with self._connect() as sock:
                 sock.sendall(f"zSCAN {path}\0".encode())
                 response = b""
@@ -101,6 +107,11 @@ class ClamdScanner:
             raise ScannerUnavailableError(
                 f"file exceeds clamd StreamMaxLength ({text!r}) — raise STREAM_SCAN_MAX_SIZE and "
                 "clamd's StreamMaxLength together"
+            )
+        if "Access denied" in text:
+            raise ScannerUnavailableError(
+                f"clamd cannot read the temp scan file ({text!r}) — the clamd user must be able "
+                f"to traverse and read {scan_dir}"
             )
         raise ScannerUnavailableError(f"unexpected clamd response: {text!r}")
 
