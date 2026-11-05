@@ -291,3 +291,99 @@ test('withRetry does not retry non-transient errors and gives up after attempts'
   );
   assert.equal(calls2, 2); // gave up after attempts
 });
+
+test('escapeHtml escapes markup-significant characters', () => {
+  assert.equal(CT.escapeHtml('<b>"x" & \'y\'</b>'), '&lt;b&gt;&quot;x&quot; &amp; &#39;y&#39;&lt;/b&gt;');
+  assert.equal(CT.escapeHtml('plain'), 'plain');
+});
+
+test('engineRowHtml renders a spinner while scanning, verdicts when done', () => {
+  const scanning = CT.engineRowHtml({ name: 'ClamAV (clamd)', status: 'scanning' }, 0);
+  assert.match(scanning, /class="spinner engine-spinner"/);
+  assert.match(scanning, /Scanning…/);
+  assert.match(scanning, /ClamAV \(clamd\)/);
+  assert.match(scanning, /data-engine="0"/);
+
+  const clean = CT.engineRowHtml({ name: 'YARA (local rules)', status: 'done', verdict: 'clean', signature: null }, 1);
+  assert.match(clean, /Undetected/);
+  assert.match(clean, /#39ac4c/);
+  assert.doesNotMatch(clean, /engine-spinner/);
+
+  const bad = CT.engineRowHtml({ name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' }, 2);
+  assert.match(bad, /Win\.Test\.EICAR_HDB-1/);
+  assert.match(bad, /engine-result flag/);
+  assert.match(bad, /#c52420/);
+
+  // engine names/signatures are escaped, never injected as HTML
+  const evil = CT.engineRowHtml({ name: '<img src=x>', status: 'done', verdict: 'infected', signature: '<script>alert(1)</script>' }, 0);
+  assert.ok(!evil.includes('<img src=x>'));
+  assert.ok(!evil.includes('<script>alert(1)</script>'));
+  assert.match(evil, /&lt;script&gt;/);
+});
+
+test('updateEngineProgress re-renders one row per engine and is null-safe', () => {
+  delete globalThis.document;
+  assert.doesNotThrow(() => CT.updateEngineProgress([{ name: 'x', status: 'scanning' }]));
+  assert.doesNotThrow(() => CT.updateEngineProgress(null));
+  assert.doesNotThrow(() => CT.updateEngineProgress('nope'));
+
+  const box = { innerHTML: '' };
+  globalThis.document = { getElementById: (id) => (id === 'engine-progress' ? box : null) };
+  CT.updateEngineProgress([
+    { name: 'ClamAV (clamd)', status: 'done', verdict: 'clean', signature: null },
+    { name: 'YARA (local rules)', status: 'scanning' },
+  ]);
+  assert.equal((box.innerHTML.match(/class="engine-row"/g) || []).length, 2);
+  assert.match(box.innerHTML, /Undetected/);
+  assert.match(box.innerHTML, /engine-spinner/);
+
+  CT.updateEngineProgress([]); // empty list leaves the current rows alone
+  assert.match(box.innerHTML, /Undetected/);
+  delete globalThis.document;
+});
+
+test('initPolling updates per-engine rows while pending, reloads when done', async () => {
+  let calls = 0;
+  let reloaded = false;
+  let cleared = false;
+  const pendingEl = { dataset: { sha: 'ab'.repeat(32), interval: '5' } };
+  const box = { innerHTML: '' };
+  globalThis.document = {
+    getElementById: (id) => ({ 'pending-data': pendingEl, 'engine-progress': box }[id] || null),
+  };
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        json: async () => ({
+          status: 'pending',
+          engines: [
+            { name: 'ClamAV (clamd)', status: 'done', verdict: 'infected', signature: 'Win.Test.EICAR_HDB-1' },
+            { name: 'YARA (local rules)', status: 'scanning' },
+          ],
+        }),
+      };
+    }
+    return { json: async () => ({ status: 'done', engines: [] }) };
+  };
+  let intervalId = null;
+  globalThis.setInterval = (fn, ms) => { intervalId = { fn, ms }; return 1; };
+  globalThis.clearInterval = () => { cleared = true; };
+  Object.defineProperty(globalThis, 'location', { value: { reload: () => { reloaded = true; } }, configurable: true });
+
+  CT.initPolling();
+  await intervalId.fn(); // first poll: ClamAV done, YARA still scanning
+  assert.equal(reloaded, false);
+  assert.equal(cleared, false);
+  assert.match(box.innerHTML, /Win\.Test\.EICAR_HDB-1/);
+  assert.match(box.innerHTML, /engine-spinner/); // YARA row still spinning
+  await intervalId.fn(); // second poll: scan done -> reload
+  assert.equal(cleared, true);
+  assert.equal(reloaded, true);
+
+  delete globalThis.document;
+  delete globalThis.fetch;
+  delete globalThis.setInterval;
+  delete globalThis.clearInterval;
+  delete globalThis.location;
+});

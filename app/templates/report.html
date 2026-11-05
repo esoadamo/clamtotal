@@ -3,9 +3,23 @@
 {% block content %}
 {% if pending %}
 <div class="card" style="text-align:center; padding:48px 24px" id="pending-data" data-sha="{{ scan.sha256 }}" data-interval="{{ poll_interval | default(3000) }}">
-  <div class="spinner" style="width:56px; height:56px; border-width:5px"></div>
-  <div style="font-size:18px; margin-top:18px">Scanning {{ scan.file_name }}…</div>
-  <div class="muted" style="margin-top:6px">Running ClamAV and local analysis engines · SHA-256 <span class="mono">{{ scan.sha256 }}</span></div>
+  <div style="font-size:18px">Scanning {{ scan.file_name }}…</div>
+  <div class="muted" style="margin-top:6px">SHA-256 <span class="mono">{{ scan.sha256 }}</span></div>
+  <div id="engine-progress">
+    {% for e in scan.engines or [] %}
+    <div class="engine-row" data-engine="{{ loop.index0 }}">
+      <span class="engine-state">{% if e.status == "done" %}{% if e.verdict == "infected" %}<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#c52420" d="M14.4 6 14 4H5v17h2v-7h5.6l-.4 2h7V6z"/></svg>{% else %}<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#39ac4c" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>{% endif %}{% else %}<div class="spinner engine-spinner"></div>{% endif %}</span>
+      <span class="engine-name">{{ e.name }}</span>
+      <span class="engine-result{% if e.status != "done" %} muted{% elif e.verdict == "infected" %} flag{% endif %}">{% if e.status == "done" %}{% if e.verdict == "infected" %}{{ e.signature }}{% else %}Undetected{% endif %}{% else %}Scanning…{% endif %}</span>
+    </div>
+    {% else %}
+    <div class="engine-row" data-engine="0">
+      <span class="engine-state"><div class="spinner engine-spinner"></div></span>
+      <span class="engine-name">Analysis engines</span>
+      <span class="engine-result muted">Scanning…</span>
+    </div>
+    {% endfor %}
+  </div>
 </div>
 {% else %}
 {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}

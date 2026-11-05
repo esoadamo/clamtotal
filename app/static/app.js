@@ -253,6 +253,45 @@
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /* VT-style per-engine progress row: a spinning circle while the engine scans,
+     swapped for a flag/check + verdict the moment the result arrives. */
+  function engineRowHtml(e, i) {
+    var state, result, cls;
+    if (e && e.status === 'done') {
+      if (e.verdict === 'infected') {
+        state = '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#c52420" d="M14.4 6 14 4H5v17h2v-7h5.6l-.4 2h7V6z"/></svg>';
+        result = escapeHtml(e.signature || 'infected');
+        cls = 'flag';
+      } else {
+        state = '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#39ac4c" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
+        result = 'Undetected';
+        cls = 'muted';
+      }
+    } else {
+      state = '<div class="spinner engine-spinner"></div>';
+      result = 'Scanning…';
+      cls = 'muted';
+    }
+    return '<div class="engine-row" data-engine="' + i + '">' +
+      '<span class="engine-state">' + state + '</span>' +
+      '<span class="engine-name">' + escapeHtml((e && e.name) || 'engine') + '</span>' +
+      '<span class="engine-result ' + cls + '">' + result + '</span></div>';
+  }
+
+  /* Re-render the per-engine progress list from the polled report (results land
+     one engine at a time; the page reloads once the whole scan is done). */
+  function updateEngineProgress(engines) {
+    var box = $('engine-progress');
+    if (!box || !Array.isArray(engines) || !engines.length) return;
+    box.innerHTML = engines.map(engineRowHtml).join('');
+  }
+
   function $(id) { return global.document ? global.document.getElementById(id) : null; }
 
   function openModal(title, bodyHtml) {
@@ -289,7 +328,12 @@
       return global.fetch('/api/v2/files/' + sha)
         .then(function (r) { return r.json(); })
         .then(function (data) {
-          if (data.status === 'done') { global.clearInterval(timer); global.location.reload(); }
+          if (data.status === 'done') {
+            global.clearInterval(timer);
+            global.location.reload();
+          } else {
+            updateEngineProgress(data.engines); // per-engine verdicts as they arrive
+          }
         })
         .catch(function () {});
     }, interval);
@@ -586,6 +630,9 @@
     withRetry: withRetry,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,
     defang: defang,
+    escapeHtml: escapeHtml,
+    engineRowHtml: engineRowHtml,
+    updateEngineProgress: updateEngineProgress,
     openModal: openModal,
     closeModal: closeModal,
     initTabs: initTabs,

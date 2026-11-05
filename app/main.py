@@ -237,6 +237,24 @@ def _lookup(db: Session, hash_value: str) -> Scan | None:
     ).scalar_one_or_none()
 
 
+def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
+    """Initial per-engine progress rows (all "scanning") for a freshly enqueued scan.
+    The ClamAV engine name comes from the active scanner when one is already resolved
+    (lru_cached, so this does not block); otherwise fall back to a generic name."""
+    if scanner is not None:
+        clam_name = scanner.engine
+    else:
+        try:
+            clam_name = get_scanner().engine
+        except ScannerUnavailableError:
+            clam_name = "ClamAV"
+    engines = [{"name": clam_name, "status": "scanning"}]
+    yara = get_yara_scanner()
+    if yara is not None:
+        engines.append({"name": yara.engine, "status": "scanning"})
+    return engines
+
+
 def _scan_and_store(
     db: Session,
     scanner: Scanner,
@@ -246,25 +264,60 @@ def _scan_and_store(
     depth: int = 0,
     path: Path | None = None,
 ) -> tuple[Scan, bool]:
-    """Scan with all local engines, run offline analysis, persist. Returns (scan, was_cached)."""
+    """Scan with all local engines, run offline analysis, persist. Returns (scan, was_cached).
+    Engine results are committed one by one as they arrive (per-engine status
+    "scanning" -> "done"), so the report page shows each verdict live."""
     hashes = compute_hashes(data)
     existing = db.get(Scan, hashes["sha256"])
     if existing and not rescan:
         return existing, True
 
-    # multi-engine verdicts: ClamAV (clamd/clamscan) + local YARA rules
+    scan = existing
+    if scan is None:
+        scan = Scan(
+            sha256=hashes["sha256"],
+            md5=hashes["md5"],
+            sha1=hashes["sha1"],
+            file_name=file_name,
+            names=[file_name],
+            size=len(data),
+            file_type="pending",
+            magic_hex="",
+            verdict="pending",
+            status="pending",
+            engine="pending",
+            urls=[],
+        )
+        db.add(scan)
+    # multi-engine verdicts: ClamAV (clamd/clamscan) + local YARA rules, each flipped
+    # to "done" with its verdict (and committed) the moment the engine finishes.
+    # NB: always assign a fresh copy to the JSON column — mutating an assigned list
+    # in place also mutates SQLAlchemy's committed state, and later commits then
+    # see no change and silently skip the UPDATE.
+    engines = _scanning_engines(scanner)
+    scan.engines = [dict(e) for e in engines]
+    scan.status = "pending"
+    scan.verdict = "pending"
+    db.commit()
+
     result = scanner.scan(data, path=path)
-    engines = [{"name": result.engine, "verdict": result.verdict, "signature": result.signature}]
+    engines[0].update({"status": "done", "verdict": result.verdict, "signature": result.signature})
+    scan.engines = [dict(e) for e in engines]
+    db.commit()
+
     yara = get_yara_scanner()
     if yara is not None:
         matches = yara.scan(data)
-        engines.append(
+        engines[1].update(
             {
-                "name": yara.engine,
+                "status": "done",
                 "verdict": "infected" if matches else "clean",
                 "signature": ", ".join(matches) if matches else None,
             }
         )
+        scan.engines = [dict(e) for e in engines]
+        db.commit()
+
     verdict = "infected" if any(e["verdict"] == "infected" for e in engines) else "clean"
     signature = next((e["signature"] for e in engines if e["verdict"] == "infected"), None)
 
@@ -317,13 +370,8 @@ def _scan_and_store(
         behavior=behavior,
         embedded=embedded,
     )
-    if existing:
-        for key, value in fields.items():
-            setattr(existing, key, value)
-        scan = existing
-    else:
-        scan = Scan(sha256=hashes["sha256"], **fields)
-        db.add(scan)
+    for key, value in fields.items():
+        setattr(scan, key, value)
     db.commit()
     (Path(settings.upload_dir) / scan.sha256).write_bytes(data)
     return scan, False
@@ -407,6 +455,7 @@ def _enqueue_scan_file(
         existing.status = "pending"
         existing.verdict = "pending"
         existing.file_name = file_name
+        existing.engines = _scanning_engines()
         names = sorted(set(existing.names or []) | {file_name})
         existing.names = names
         scan = existing
@@ -424,6 +473,7 @@ def _enqueue_scan_file(
             status="pending",
             engine="pending",
             urls=[],
+            engines=_scanning_engines(),
         )
         db.add(scan)
     db.commit()
@@ -764,6 +814,7 @@ def rescan(
     background_tasks: BackgroundTasks,
     hash_value: str,
     db: Session = Depends(get_db),
+    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
 ) -> RedirectResponse:
     scan = _lookup(db, hash_value)
     stored = Path(settings.upload_dir) / scan.sha256 if scan else None

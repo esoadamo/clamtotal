@@ -65,6 +65,15 @@ def test_pending_report_contract(client, monkeypatch):
                 status="pending",
                 engine="pending",
                 urls=[],
+                engines=[
+                    {
+                        "name": "ClamAV (fake)",
+                        "status": "done",
+                        "verdict": "clean",
+                        "signature": None,
+                    },
+                    {"name": "YARA (local rules)", "status": "scanning"},
+                ],
             )
         )
         db.commit()
@@ -74,6 +83,42 @@ def test_pending_report_contract(client, monkeypatch):
     assert 'data-interval="4321"' in page
     assert "Scanning fe.bin" in page
     assert "vt-spin" not in page and "ct-spin" in page
+    # VT-style per-engine progress: one row per engine, spinner while scanning,
+    # verdict as soon as the engine finished
+    assert 'id="engine-progress"' in page
+    assert page.count('class="engine-row"') == 2
+    assert "ClamAV (fake)" in page and "YARA (local rules)" in page
+    assert "Undetected" in page  # done + clean
+    assert "Scanning…" in page  # still scanning
+    assert "engine-spinner" in page
+
+
+def test_pending_report_without_engines_shows_generic_row(client):
+    sha = "8e" * 32
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha,
+                md5="4" * 32,
+                sha1="4" * 40,
+                file_name="legacy.bin",
+                size=1,
+                file_type="data",
+                magic_hex="",
+                verdict="pending",
+                status="pending",
+                engine="pending",
+                urls=[],
+            )
+        )
+        db.commit()
+    page = client.get(f"/ui/file/{sha}").text
+    assert 'id="engine-progress"' in page
+    assert page.count('class="engine-row"') == 1  # fallback row when no engine list yet
+    assert "Analysis engines" in page
 
 
 def test_done_report_contract(client):

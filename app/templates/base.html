@@ -165,6 +165,13 @@
     animation: ct-spin 0.8s linear infinite;
   }
   @keyframes ct-spin { to { transform: rotate(360deg); } }
+  /* per-engine live progress on the pending report page (VT-style spinner per engine) */
+  #engine-progress { margin-top: 24px; display: inline-block; text-align: left; }
+  .engine-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; min-width: 320px; }
+  .engine-state { width: 20px; display: inline-flex; justify-content: center; flex: none; }
+  .engine-spinner { width: 18px; height: 18px; border-width: 3px; margin: 0; }
+  .engine-name { font-weight: 500; }
+  .engine-result { font-size: 13px; word-break: break-all; }
   .progress-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 14px; }
   .progress-bar { height: 100%; width: 0%; background: var(--accent); border-radius: 3px; transition: width 0.15s ease; }
   .dz-status { margin-top: 14px; font-size: 14px; color: var(--text); }

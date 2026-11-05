@@ -23,7 +23,13 @@ class ApiScanResponse(BaseModel):
 
 class EngineVerdict(BaseModel):
     name: str = Field(description="engine name, e.g. 'ClamAV (clamd)'")
-    verdict: str = Field(description="'clean' | 'infected'")
+    status: str = Field(
+        default="done",
+        description="'scanning' while the engine runs, 'done' once the verdict is in",
+    )
+    verdict: str = Field(
+        default="", description="'clean' | 'infected' (empty while still scanning)"
+    )
     signature: str | None = Field(description="detection signature, if infected")
 
 

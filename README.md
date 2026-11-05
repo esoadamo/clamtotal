@@ -39,7 +39,9 @@ Features (all fully offline, no login, no community features):
   `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
   report; new files ask for confirmation, then upload with a progress bar plus
   live speed/ETA readout (whole-file and chunked uploads alike) and
-  land on `/file/{hash}`, which shows a rotating spinner until the scan finishes.
+  land on `/file/{hash}`, which shows one spinning circle per engine (ClamAV, YARA)
+  while scanning and swaps in each engine's verdict (signature or "Undetected") the
+  moment that engine finishes, VirusTotal-style, until the full report is ready.
   Files larger than `CHUNK_UPLOAD_SIZE` (default 25 MB) are uploaded in chunks —
   by default over a persistent WebSocket (`/file/upload/ws`, small frames, resumable
   on reconnect, immune to per-request proxy body caps/timeouts like Cloudflare's),
