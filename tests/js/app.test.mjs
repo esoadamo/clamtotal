@@ -470,3 +470,11 @@ test('initPolling updates engine rows in place when nothing new was committed', 
   delete globalThis.clearInterval;
   delete globalThis.location;
 });
+
+test('uploadStatusText shows upload progress, then Combining once all bytes are sent', () => {
+  assert.equal(CT.uploadStatusText('a.bin', 0), 'Uploading a.bin… 0%');
+  assert.equal(CT.uploadStatusText('a.bin', 57), 'Uploading a.bin… 57%');
+  assert.equal(CT.uploadStatusText('a.bin', 99), 'Uploading a.bin… 99%');
+  // 100% sent: the server is reassembling/hashing before the report page opens
+  assert.equal(CT.uploadStatusText('a.bin', 100), 'Combining a.bin…');
+});

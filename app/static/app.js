@@ -194,6 +194,14 @@
     return h + 'h ' + ('0' + (m - h * 60)).slice(-2) + 'm';
   }
 
+  /* Dropzone status line: while bytes are moving it's the upload progress; once
+     everything is sent the server reassembles + hashes the file before the report
+     page can open, so show "Combining …" instead of a frozen 100% upload. */
+  function uploadStatusText(fileName, pct) {
+    if (pct >= 100) return 'Combining ' + fileName + '…';
+    return 'Uploading ' + fileName + '… ' + pct + '%';
+  }
+
   /* " · 135/300 MB · 3.2 MB/s · ETA 12s" appended to the upload status line;
      empty until 100ms elapsed so the first paint doesn't show a bogus speed */
   function uploadStatsSuffix(sentBytes, totalBytes, startMs, nowMs) {
@@ -408,8 +416,9 @@
         var flying = Object.keys(inFlight).reduce(function (n, k) { return n + inFlight[k]; }, 0);
         var pct = chunkProgressPct(doneBytes, flying, file.size);
         if (bar) bar.style.width = pct + '%';
-        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
-          uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now());
+        if (pct >= 100 && spinner) spinner.style.display = 'block'; // all sent: server combining
+        if (status) status.textContent = uploadStatusText(file.name, pct) +
+          (pct >= 100 ? '' : uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now()));
       }
       var ticker = setInterval(report, 500);
       function stopTicker() { clearInterval(ticker); }
@@ -489,8 +498,9 @@
         var flying = Object.keys(inFlight).reduce(function (n, k) { return n + inFlight[k]; }, 0);
         var pct = chunkProgressPct(doneBytes, flying, file.size);
         if (bar) bar.style.width = pct + '%';
-        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
-          uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now());
+        if (pct >= 100 && spinner) spinner.style.display = 'block'; // all sent: server combining
+        if (status) status.textContent = uploadStatusText(file.name, pct) +
+          (pct >= 100 ? '' : uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now()));
       }
       report();
       // re-render on a timer too: when the network stalls no progress events fire,
@@ -542,7 +552,7 @@
       if (errorBox) errorBox.style.display = 'none';
       if (progress) progress.style.display = 'block';
       if (spinner) spinner.style.display = 'none';
-      if (status) status.textContent = 'Uploading ' + file.name + '…';
+      if (status) status.textContent = uploadStatusText(file.name, 0);
       if (bar) bar.style.width = '0%';
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256);
@@ -552,15 +562,16 @@
         if (!bar || !status) return;
         var pct = Math.min(100, Math.round((lastLoaded / lastTotal) * 100));
         bar.style.width = pct + '%';
-        status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
-          uploadStatsSuffix(lastLoaded, lastTotal, startedAt, Date.now());
+        if (pct >= 100 && spinner) spinner.style.display = 'block'; // all sent: server combining
+        status.textContent = uploadStatusText(file.name, pct) +
+          (pct >= 100 ? '' : uploadStatsSuffix(lastLoaded, lastTotal, startedAt, Date.now()));
       }
       var xhr = new global.XMLHttpRequest();
       xhr.open('POST', form.action);
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable) { lastLoaded = e.loaded; lastTotal = e.total; renderUpload(); }
       };
-      xhr.upload.onload = function () { if (bar) bar.style.width = '100%'; };
+      xhr.upload.onload = function () { lastLoaded = lastTotal; renderUpload(); };
       // same stall handling as the chunked path: keep re-rendering on a timer
       var ticker = setInterval(renderUpload, 500);
       xhr.onload = function () {
@@ -641,6 +652,7 @@
     chunkProgressPct: chunkProgressPct,
     formatBytes: formatBytes,
     formatEta: formatEta,
+    uploadStatusText: uploadStatusText,
     uploadStatsSuffix: uploadStatsSuffix,
     wsUrl: wsUrl,
     runPool: runPool,
