@@ -156,6 +156,9 @@ def test_done_report_contract(client):
     assert "hxxp://evil-example[.]com/path" in page.text
     assert 'href="http://evil-example.com/path"' not in page.text
     assert "<a " not in page.text.split('id="tab-network"')[1].split("</section>")[0]
+    # a finished report carries no polling hooks: the page must not reload itself
+    assert 'id="scan-progress"' not in page.text
+    assert "data-sha=" not in page.text
 
 
 def test_recent_table_contract(client):

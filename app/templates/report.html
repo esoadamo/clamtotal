@@ -6,7 +6,9 @@
 {% set total = engines | length %}
 {% set done = engines | selectattr('status', 'equalto', 'done') | list | length %}
 {% set ring_color = '#c52420' if det else ('#9ca3af' if pending else '#39ac4c') %}
-<div id="scan-progress" data-sha="{{ scan.sha256 }}" data-interval="{{ poll_interval | default(3000) }}" data-key="{{ done }}:{{ 1 if scan.behavior else 0 }}">
+{# polling hooks only exist while the scan is pending — a finished report must not
+   keep reloading itself in the background every poll interval #}
+<div {% if pending %}id="scan-progress" data-sha="{{ scan.sha256 }}" data-interval="{{ poll_interval | default(3000) }}" data-key="{{ done }}:{{ 1 if scan.behavior else 0 }}"{% endif %}>
 
 <div class="card">
   <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap">

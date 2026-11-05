@@ -59,6 +59,18 @@ test('modal functions are safe without a document', () => {
   assert.doesNotThrow(() => CT.initUpload());
 });
 
+test('initPolling does nothing on a finished page (no #scan-progress element)', () => {
+  let intervalCalled = false;
+  globalThis.document = { getElementById: () => null }; // done page: no polling hooks
+  globalThis.setInterval = () => { intervalCalled = true; return 1; };
+  globalThis.fetch = async () => { throw new Error('must not be called'); };
+  CT.initPolling();
+  assert.equal(intervalCalled, false);
+  delete globalThis.document;
+  delete globalThis.setInterval;
+  delete globalThis.fetch;
+});
+
 test('initPolling polls and reloads when done', async () => {
   let calls = 0;
   let reloaded = false;

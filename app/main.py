@@ -465,10 +465,16 @@ def _enqueue_scan_file(
         head = f.read(65536)  # sniff_file_type only inspects the head of the file
     file_type, magic_hex = sniff_file_type(head)
     if existing:
+        already_pending = existing.status == "pending"
         existing.status = "pending"
         existing.verdict = "pending"
         existing.file_name = file_name
-        existing.engines = _scanning_engines()
+        if not already_pending:
+            # Fresh (re)scan: reset the per-engine progress. When a scan is already
+            # running for this hash, keep the live progress as-is — resetting it to
+            # "scanning" would make finished engines flicker back (e.g. the same
+            # file enqueued twice via websocket + HTTP fallback).
+            existing.engines = _scanning_engines()
         names = sorted(set(existing.names or []) | {file_name})
         existing.names = names
         scan = existing

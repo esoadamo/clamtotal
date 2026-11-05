@@ -152,6 +152,53 @@ def test_enqueue_marks_engines_scanning(client):
         assert scan2.engines == [{"name": "ClamAV (fake)", "status": "scanning"}]
 
 
+def test_enqueue_keeps_live_progress_when_already_pending(client):
+    """Re-enqueueing a hash whose scan is already running (e.g. websocket upload
+    falling back to HTTP chunks) must not flip finished engines back to
+    'scanning' — the live progress of the running scan is kept as-is."""
+    from pathlib import Path
+
+    from fastapi import BackgroundTasks
+
+    from app.analysis import compute_hashes
+    from app.config import settings
+
+    content = b"double enqueue sample"
+    sha = hashlib.sha256(content).hexdigest()
+    path = Path(settings.upload_dir) / sha
+    path.write_bytes(content)
+    hashes = compute_hashes(content)
+    live = [
+        {"name": "ClamAV (fake)", "status": "done", "verdict": "clean", "signature": None},
+        {"name": "YARA (local rules)", "status": "scanning"},
+    ]
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha,
+                md5=hashes["md5"],
+                sha1=hashes["sha1"],
+                file_name="first.bin",
+                size=len(content),
+                file_type="data",
+                magic_hex="",
+                verdict="pending",
+                status="pending",
+                engine="pending",
+                urls=[],
+                engines=[dict(e) for e in live],
+            )
+        )
+        db.commit()
+        scan, cached = main_module._enqueue_scan_file(
+            BackgroundTasks(), db, path, hashes, "second.bin"
+        )
+        assert cached is False
+        assert scan.status == "pending"
+        assert scan.engines == live  # untouched, no flicker back to all-scanning
+        assert "second.bin" in (scan.names or [])  # new name still recorded
+
+
 def test_scanning_engines_falls_back_without_clamav(client, monkeypatch):
     def boom():
         raise ScannerUnavailableError("no backend")
