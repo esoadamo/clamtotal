@@ -338,6 +338,9 @@
           uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now());
       }
       report();
+      // re-render on a timer too: when the network stalls no progress events fire,
+      // so without this the speed/ETA readout freezes at its last value
+      var ticker = setInterval(report, 500);
       // send chunks one at a time: through the Cloudflare tunnel the bandwidth is
       // shared anyway, and parallel requests only push some of them past CF's ~100s
       // request timeout (524s) — sequential keeps every request well under it
@@ -374,8 +377,8 @@
           showError('Upload failed (' + res.status + '): ' + res.body.slice(0, 200));
           throw new Error('chunk failed');
         });
-      }).then(function () { global.location.href = '/ui/file/' + sha256; })
-        .catch(function () { /* error already shown */ });
+      }).then(function () { clearInterval(ticker); global.location.href = '/ui/file/' + sha256; })
+        .catch(function () { clearInterval(ticker); /* error already shown */ });
     }
 
     function startUpload(file, sha256) {
@@ -389,18 +392,24 @@
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256);
       var startedAt = Date.now();
+      var lastLoaded = 0, lastTotal = file.size || 1;
+      function renderUpload() {
+        if (!bar || !status) return;
+        var pct = Math.min(100, Math.round((lastLoaded / lastTotal) * 100));
+        bar.style.width = pct + '%';
+        status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
+          uploadStatsSuffix(lastLoaded, lastTotal, startedAt, Date.now());
+      }
       var xhr = new global.XMLHttpRequest();
       xhr.open('POST', form.action);
       xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable && bar && status) {
-          var pct = Math.round((e.loaded / e.total) * 100);
-          bar.style.width = pct + '%';
-          status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
-            uploadStatsSuffix(e.loaded, e.total, startedAt, Date.now());
-        }
+        if (e.lengthComputable) { lastLoaded = e.loaded; lastTotal = e.total; renderUpload(); }
       };
       xhr.upload.onload = function () { if (bar) bar.style.width = '100%'; };
+      // same stall handling as the chunked path: keep re-rendering on a timer
+      var ticker = setInterval(renderUpload, 500);
       xhr.onload = function () {
+        clearInterval(ticker);
         if (xhr.status === 200 || xhr.status === 202) {
           global.location.href = '/ui/file/' + sha256;
           return;
@@ -414,7 +423,7 @@
         }
         showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
       };
-      xhr.onerror = function () { showError('Network error while uploading.'); };
+      xhr.onerror = function () { clearInterval(ticker); showError('Network error while uploading.'); };
       var fd = new FormData();
       fd.append('file', file, file.name);
       xhr.send(fd);

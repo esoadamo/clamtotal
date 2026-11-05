@@ -229,6 +229,15 @@ test('uploadStatsSuffix shows transferred bytes, speed and ETA', () => {
   );
 });
 
+test('uploadStatsSuffix decays speed and grows ETA when transfer stalls', () => {
+  // same 150 MB sent, but twice the time elapsed with no new bytes:
+  // speed halves (15 -> 7.5 MB/s) and ETA doubles (10s -> 20s)
+  assert.equal(
+    CT.uploadStatsSuffix(150 * 1024 * 1024, 300 * 1024 * 1024, 0, 20000),
+    ' \u00b7 150 MB/300 MB \u00b7 7.5 MB/s \u00b7 ETA 20s'
+  );
+});
+
 test('runPool runs with bounded concurrency and ordered results', async () => {
   let active = 0, maxActive = 0;
   const items = Array.from({ length: 10 }, (_, i) => i);
