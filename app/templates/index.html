@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="hero-title">Analyze suspicious <em>files</em> and URLs</h1>
 <div class="card">
-  <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}">
+  <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}" data-ws-upload="{{ '1' if ws_enabled else '0' }}" data-ws-chunk-size="{{ ws_chunk_size | default(0) }}">
     <div class="dropzone" id="dropzone">
       <div id="dz-idle">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">

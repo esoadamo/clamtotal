@@ -39,6 +39,8 @@ def test_home_upload_contract(client):
         'id="upload-form"',
         'action="/file/upload"',
         'data-chunk-size="',
+        'data-ws-upload="',
+        'data-ws-chunk-size="',
     ]:
         assert marker in home, marker
 

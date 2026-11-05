@@ -205,6 +205,13 @@
       ' \u00b7 ' + formatBytes(speed) + '/s \u00b7 ETA ' + formatEta(eta);
   }
 
+  /* WebSocket URL for an app path, following the page's protocol (wss over https). */
+  function wsUrl(path) {
+    var loc = global.location || {};
+    var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+    return proto + '//' + (loc.host || 'localhost') + path;
+  }
+
   /* Retry an async fn up to `attempts` times on transient failures (err.transient),
      with a short delay between tries. Proxies like Cloudflare occasionally return
      524 (origin timeout) on long requests — those chunks must be retried, not fail
@@ -320,9 +327,96 @@
       });
     }
 
-    /* Large files: upload in chunks so no single request body exceeds the proxy's
-       limit (e.g. Cloudflare). Server reassembles, verifies SHA-256, and scans. */
+    /* Large files: prefer a persistent WebSocket (small frames, no per-request proxy
+       limits, resumable on reconnect); fall back to classic HTTP chunked upload. */
     function startChunkedUpload(file, sha256) {
+      if (form.dataset.wsUpload === '1') return startWsUpload(file, sha256);
+      return startHttpChunkedUpload(file, sha256);
+    }
+
+    function startWsUpload(file, sha256) {
+      var wsChunkSize = parseInt(form.dataset.wsChunkSize || '0', 10);
+      var plan = chunkPlan(file.size, wsChunkSize);
+      if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
+      var total = plan.length;
+      var doneBytes = 0;         // bytes acked by the server
+      var inFlight = {};         // part.index -> bytes sent but not yet acked
+      var received = {};         // part.index -> true once acked (or already on server)
+      var startedAt = Date.now();
+      function report() {
+        var flying = Object.keys(inFlight).reduce(function (n, k) { return n + inFlight[k]; }, 0);
+        var pct = chunkProgressPct(doneBytes, flying, file.size);
+        if (bar) bar.style.width = pct + '%';
+        if (status) status.textContent = 'Uploading ' + file.name + '… ' + pct + '%' +
+          uploadStatsSuffix(doneBytes + flying, file.size, startedAt, Date.now());
+      }
+      var ticker = setInterval(report, 500);
+      function stopTicker() { clearInterval(ticker); }
+      function sendNext(ws) {
+        for (var i = 0; i < plan.length; i++) {
+          var part = plan[i];
+          if (received[part.index] || inFlight[part.index] !== undefined) continue;
+          inFlight[part.index] = part.end - part.start;
+          report();
+          ws.send(JSON.stringify({ type: 'chunk', index: part.index, size: part.end - part.start }));
+          ws.send(file.slice(part.start, part.end));
+          return;
+        }
+      }
+      // (re)connect, announce the file, resume from what the server already has;
+      // give up after `retriesLeft` disconnects and let the caller fall back to HTTP
+      function attempt(retriesLeft) {
+        return new Promise(function (resolve, reject) {
+          var ws = new global.WebSocket(wsUrl('/file/upload/ws'));
+          var settled = false;
+          ws.onopen = function () {
+            ws.send(JSON.stringify({ type: 'start', sha256: sha256, total: total, name: file.name }));
+          };
+          ws.onmessage = function (ev) {
+            var msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            if (msg.type === 'ready') {
+              (msg.received || []).forEach(function (i) {
+                if (!received[i] && plan[i]) {
+                  received[i] = true;
+                  doneBytes += plan[i].end - plan[i].start;
+                }
+              });
+              report();
+              sendNext(ws);
+            } else if (msg.type === 'ack' && plan[msg.index]) {
+              received[msg.index] = true;
+              doneBytes += plan[msg.index].end - plan[msg.index].start;
+              delete inFlight[msg.index];
+              report();
+              sendNext(ws);
+            } else if (msg.type === 'done') {
+              settled = true; stopTicker(); resolve(msg);
+            } else if (msg.type === 'error') {
+              settled = true; stopTicker(); reject(new Error(msg.detail || 'server error'));
+            }
+          };
+          ws.onerror = function () { /* onclose follows */ };
+          ws.onclose = function () {
+            if (settled) return;
+            stopTicker();
+            if (retriesLeft > 0) {
+              setTimeout(function () { attempt(retriesLeft - 1).then(resolve, reject); }, 1500);
+            } else {
+              reject(new Error('websocket unavailable'));
+            }
+          };
+        });
+      }
+      report();
+      return attempt(3)
+        .then(function () { global.location.href = '/ui/file/' + sha256; })
+        .catch(function () { return startHttpChunkedUpload(file, sha256); });
+    }
+
+    /* HTTP chunked fallback: upload in chunks so no single request body exceeds the
+       proxy's limit (e.g. Cloudflare). Server reassembles, verifies SHA-256, scans. */
+    function startHttpChunkedUpload(file, sha256) {
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       var plan = chunkPlan(file.size, chunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
@@ -487,6 +581,7 @@
     formatBytes: formatBytes,
     formatEta: formatEta,
     uploadStatsSuffix: uploadStatsSuffix,
+    wsUrl: wsUrl,
     runPool: runPool,
     withRetry: withRetry,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,

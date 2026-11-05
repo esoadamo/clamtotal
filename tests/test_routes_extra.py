@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 from app.config import settings
@@ -596,3 +597,104 @@ def test_privacy_policy_ttl_sentence_reflects_setting(client, monkeypatch):
     assert "All uploaded files are deleted after 2 hours." in client.get("/ui/privacy").text
     monkeypatch.setattr(s, "uploads_ttl", 7200)
     assert "All uploaded files are deleted after 5 days." in client.get("/ui/privacy").text
+
+
+def _ws_start(ws, sha, total, name="ws.bin"):
+    ws.send_text(json.dumps({"type": "start", "sha256": sha, "total": total, "name": name}))
+
+
+def test_ws_upload_happy_path_with_resume(client, monkeypatch):
+    import time
+
+    monkeypatch.setattr(settings, "ws_chunk_size", 1024)
+    content = b"ws upload test payload " * 200  # 4600 bytes -> 5 chunks of 1 KiB
+    sha = hashlib.sha256(content).hexdigest()
+    total = 5
+    # pre-store chunk 0 to exercise resume ("ready" must report it)
+    chunks_dir = Path(settings.upload_dir) / ".chunks" / sha
+    chunks_dir.mkdir(parents=True)
+    (chunks_dir / "000000").write_bytes(content[:1024])
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, total)
+        ready = ws.receive_json()
+        assert ready["type"] == "ready" and ready["received"] == [0]
+        for i in range(1, total):
+            part = content[i * 1024 : (i + 1) * 1024]
+            ws.send_text(json.dumps({"type": "chunk", "index": i, "size": len(part)}))
+            ws.send_bytes(part)
+            ack = ws.receive_json()
+            assert ack["type"] == "ack" and ack["index"] == i
+        done = ws.receive_json()
+        assert done["type"] == "done" and done["sha256"] == sha
+    for _ in range(50):
+        if client.get(f"/api/v2/files/{sha}").json()["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert client.get(f"/api/v2/files/{sha}").json()["status"] == "done"
+    assert not chunks_dir.exists()  # cleaned up
+
+
+def test_ws_upload_error_paths(client, monkeypatch):
+    monkeypatch.setattr(settings, "ws_chunk_size", 1024)
+    sha = "b" * 64
+    # disabled endpoint
+    monkeypatch.setattr(settings, "ws_upload_enabled", False)
+    with client.websocket_connect("/file/upload/ws") as ws:
+        msg = ws.receive_json()
+        assert msg["type"] == "error" and "disabled" in msg["detail"]
+    monkeypatch.setattr(settings, "ws_upload_enabled", True)
+    # invalid sha256 in start
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, "zz", 1)
+        assert "invalid sha256" in ws.receive_json()["detail"]
+    # chunk header before start
+    with client.websocket_connect("/file/upload/ws") as ws:
+        ws.send_text(json.dumps({"type": "chunk", "index": 0, "size": 1}))
+        assert ws.receive_json()["detail"] == "start first"
+    # malformed control message
+    with client.websocket_connect("/file/upload/ws") as ws:
+        ws.send_text("not json")
+        assert ws.receive_json()["detail"] == "malformed control message"
+    # unknown type
+    with client.websocket_connect("/file/upload/ws") as ws:
+        ws.send_text(json.dumps({"type": "bogus"}))
+        assert "unknown message type" in ws.receive_json()["detail"]
+    # invalid index/size
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, 2)
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_text(json.dumps({"type": "chunk", "index": 5, "size": 1}))
+        assert ws.receive_json()["detail"] == "invalid index/size"
+    # binary before chunk header
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, 1)
+        ws.receive_json()
+        ws.send_bytes(b"x")
+        assert ws.receive_json()["detail"] == "chunk header first"
+    # chunk size mismatch (more bytes than announced)
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, 1)
+        ws.receive_json()
+        ws.send_text(json.dumps({"type": "chunk", "index": 0, "size": 1}))
+        ws.send_bytes(b"xx")
+        assert ws.receive_json()["detail"] == "chunk size mismatch"
+    # assembled hash mismatch -> verification error, chunks cleaned
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, 1)
+        ws.receive_json()
+        ws.send_text(json.dumps({"type": "chunk", "index": 0, "size": 3}))
+        ws.send_bytes(b"abc")
+        ack = ws.receive_json()
+        assert ack["type"] == "ack"
+        err = ws.receive_json()
+        assert err["type"] == "error" and "verification" in err["detail"]
+    assert not (Path(settings.upload_dir) / ".chunks" / sha).exists()
+
+
+def test_ws_upload_client_disconnect_is_clean(client, monkeypatch):
+    monkeypatch.setattr(settings, "ws_chunk_size", 1024)
+    sha = "c" * 64
+    with client.websocket_connect("/file/upload/ws") as ws:
+        _ws_start(ws, sha, 10)
+        assert ws.receive_json()["type"] == "ready"
+    # context exit closes the socket mid-upload; server must not raise

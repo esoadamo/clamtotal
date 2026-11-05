@@ -238,6 +238,15 @@ test('uploadStatsSuffix decays speed and grows ETA when transfer stalls', () => 
   );
 });
 
+test('wsUrl follows the page protocol and host', () => {
+  globalThis.location = { protocol: 'https:', host: 'clamtotal.com' };
+  assert.equal(CT.wsUrl('/file/upload/ws'), 'wss://clamtotal.com/file/upload/ws');
+  globalThis.location = { protocol: 'http:', host: '192.168.1.10:8000' };
+  assert.equal(CT.wsUrl('/file/upload/ws'), 'ws://192.168.1.10:8000/file/upload/ws');
+  delete globalThis.location;
+  assert.equal(CT.wsUrl('/x'), 'ws://localhost/x');
+});
+
 test('runPool runs with bounded concurrency and ordered results', async () => {
   let active = 0, maxActive = 0;
   const items = Array.from({ length: 10 }, (_, i) => i);

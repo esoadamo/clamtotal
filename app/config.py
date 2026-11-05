@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # 0 disables chunked upload. Default 25M stays well under Cloudflare's 100M request-body
     # cap (free plan) even with multipart overhead and proxy buffers
     chunk_upload_size: int = 25 * 1024 * 1024  # bytes
+    # WebSocket upload: one persistent connection with small binary frames, so no
+    # per-request proxy body cap / ~100s timeout (Cloudflare's limits that bite HTTP
+    # chunks). The client falls back to POST /file/upload/chunk when WS fails.
+    # ws_upload_enabled=false (or ws_chunk_size=0) disables the WS endpoint.
+    ws_upload_enabled: bool = True
+    ws_chunk_size: int = 1024 * 1024  # client-side WS frame size, bytes
 
     # shown in the page footer; the container sets it at BUILD time (UTC YYMMDD.hhmmss)
     app_version: str = ""

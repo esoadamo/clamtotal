@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import threading
@@ -17,6 +18,7 @@ from fastapi import (
     HTTPException,
     Request,
     UploadFile,
+    WebSocket,
 )
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -191,12 +193,12 @@ _rate_buckets: dict[str, tuple[float, int]] = {}
 _rate_lock = threading.Lock()
 
 
-def _rate_limit(request: Request, limit: int, kind: str) -> None:
+def _rate_limit_host(host: str, limit: int, kind: str) -> None:
     """Optional fixed-window per-IP rate limit; limit <= 0 disables it."""
     if limit <= 0:
         return
     now = time.time()
-    ident = f"{kind}:{request.client.host if request.client else 'unknown'}"
+    ident = f"{kind}:{host}"
     with _rate_lock:
         start, count = _rate_buckets.get(ident, (now, 0))
         if now - start >= settings.rate_limit_window_seconds:
@@ -213,6 +215,10 @@ def _rate_limit(request: Request, limit: int, kind: str) -> None:
                 del _rate_buckets[k]
         if count > limit:
             raise HTTPException(status_code=429, detail="rate limit exceeded, try again later")
+
+
+def _rate_limit(request: Request, limit: int, kind: str) -> None:
+    _rate_limit_host(request.client.host if request.client else "unknown", limit, kind)
 
 
 @app.exception_handler(ScannerUnavailableError)
@@ -332,7 +338,12 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"recent": recent, "chunk_size": settings.chunk_upload_size},
+        {
+            "recent": recent,
+            "chunk_size": settings.chunk_upload_size,
+            "ws_enabled": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
+            "ws_chunk_size": settings.ws_chunk_size,
+        },
     )
 
 
@@ -371,7 +382,7 @@ def _enqueue_scan(
 
 
 def _enqueue_scan_file(
-    background_tasks: BackgroundTasks,
+    background_tasks: BackgroundTasks | None,
     db: Session,
     path: Path,
     hashes: dict[str, str],
@@ -415,7 +426,12 @@ def _enqueue_scan_file(
         )
         db.add(scan)
     db.commit()
-    background_tasks.add_task(_run_scan_file, path, file_name)
+    if background_tasks is not None:
+        background_tasks.add_task(_run_scan_file, path, file_name)
+    else:
+        # websocket endpoints get no BackgroundTasks from starlette — run the scan
+        # in a daemon thread instead (same as startup recovery)
+        threading.Thread(target=_run_scan_file, args=(path, file_name), daemon=True).start()
     return scan, False
 
 
@@ -559,6 +575,130 @@ async def upload_chunk(
         status_code=200 if cached else 202,
         content={"sha256": scan.sha256, "status": scan.status, "cached": cached},
     )
+
+
+@app.websocket("/file/upload/ws")
+async def upload_ws(
+    websocket: WebSocket,
+    db: Session = Depends(get_db),
+    scanner: Scanner = Depends(get_scanner),  # fail fast (503) when no ClamAV backend
+) -> None:
+    # Chunked upload over one persistent WebSocket: small binary frames and no
+    # per-request proxy body cap / ~100s timeout (Cloudflare limits that bite HTTP
+    # chunks). Resumable: on (re)connect the client sends "start" and the server
+    # replies with the chunk indices it already stored. The client falls back to
+    # POST /file/upload/chunk when the socket fails.
+    #
+    # Protocol (JSON text frames for control, binary frames for payload):
+    #   client -> {"type":"start","sha256","total","name"}
+    #   server -> {"type":"ready","received":[indices]}
+    #   client -> {"type":"chunk","index":i,"size":n} then n bytes as binary frame(s)
+    #   server -> {"type":"ack","index":i,"received":k}  (k == total -> assemble+scan)
+    #   server -> {"type":"done","sha256","cached"} | {"type":"error","detail"}
+    await websocket.accept()
+    if not (settings.ws_upload_enabled and settings.ws_chunk_size > 0):
+        await websocket.send_text(
+            json.dumps({"type": "error", "detail": "websocket upload disabled"})
+        )
+        await websocket.close()
+        return
+    _rate_limit_host(
+        websocket.client.host if websocket.client else "unknown",
+        settings.rate_limit_upload,
+        "upload_ws",
+    )
+    chunks_dir: Path | None = None
+    sha256 = ""
+    total = 0
+    name = ""
+    pending_index = -1
+    pending_size = 0
+    buf = bytearray()
+
+    async def fail(detail: str) -> None:
+        await websocket.send_text(json.dumps({"type": "error", "detail": detail}))
+        await websocket.close()
+
+    while True:
+        msg = await websocket.receive()
+        if msg.get("type") == "websocket.disconnect":
+            return
+        if "text" in msg:
+            try:
+                ctrl = json.loads(msg["text"])
+                kind = ctrl["type"]
+                if kind == "start":
+                    sha256 = str(ctrl["sha256"])
+                    total = int(ctrl["total"])
+                    name = str(ctrl.get("name", ""))
+                    if not _CHUNK_NAME_RE.match(sha256) or total < 1:
+                        await fail("invalid sha256/total")
+                        return
+                    chunks_dir = Path(settings.upload_dir) / ".chunks" / sha256
+                    chunks_dir.mkdir(parents=True, exist_ok=True)
+                    received = sorted(int(p.stem) for p in chunks_dir.iterdir() if p.stem.isdigit())
+                    await websocket.send_text(json.dumps({"type": "ready", "received": received}))
+                elif kind == "chunk":
+                    if chunks_dir is None:
+                        await fail("start first")
+                        return
+                    pending_index = int(ctrl["index"])
+                    pending_size = int(ctrl["size"])
+                    if (
+                        not 0 <= pending_index < total
+                        or not 0 < pending_size <= settings.max_upload_size
+                    ):
+                        await fail("invalid index/size")
+                        return
+                    buf = bytearray()
+                else:
+                    await fail(f"unknown message type {kind!r}")
+                    return
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                await fail("malformed control message")
+                return
+        else:  # binary payload frame
+            if pending_index < 0 or chunks_dir is None:
+                await fail("chunk header first")
+                return
+            buf += msg["bytes"]
+            if len(buf) > pending_size:
+                await fail("chunk size mismatch")
+                return
+            if len(buf) == pending_size:
+                data = bytes(buf)
+                idx = pending_index
+                buf = bytearray()
+                pending_index = -1
+                await to_thread.run_sync((chunks_dir / f"{idx:06d}").write_bytes, data)
+                received = len(list(chunks_dir.iterdir()))
+                await websocket.send_text(
+                    json.dumps({"type": "ack", "index": idx, "received": received})
+                )
+                if received >= total:
+                    # same as the HTTP path: stream-assemble, verify, enqueue from disk
+                    result = await to_thread.run_sync(_assemble_chunks, chunks_dir, total, sha256)
+                    if result is None:
+                        shutil.rmtree(chunks_dir, ignore_errors=True)
+                        await fail("assembled file failed hash/size verification")
+                        return
+                    assembled, hashes = result
+                    final = Path(settings.upload_dir) / sha256
+                    shutil.move(str(assembled), str(final))
+                    shutil.rmtree(chunks_dir, ignore_errors=True)
+                    scan, cached = await to_thread.run_sync(
+                        _enqueue_scan_file,
+                        None,  # no BackgroundTasks on websockets — scan runs in a thread
+                        db,
+                        final,
+                        hashes,
+                        name or "upload.bin",
+                    )
+                    await websocket.send_text(
+                        json.dumps({"type": "done", "sha256": scan.sha256, "cached": cached})
+                    )
+                    await websocket.close()
+                    return
 
 
 @app.get("/ui/file/{hash_value}", response_class=HTMLResponse)
