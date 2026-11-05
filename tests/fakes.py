@@ -7,7 +7,7 @@ class FakeScanner:
     def __init__(self) -> None:
         self.calls = 0
 
-    def scan(self, data: bytes) -> ScanResult:
+    def scan(self, data: bytes, path=None) -> ScanResult:
         self.calls += 1
         if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in data:
             return ScanResult(

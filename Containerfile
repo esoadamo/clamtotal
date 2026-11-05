@@ -17,6 +17,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1 \
     CLAM_MODE=daemon \
+    CLAMD_SOCKET=/tmp/clamd.sock \
     DATABASE_URL=sqlite:////data/clamtotal.db \
     UPLOAD_DIR=/data/uploads \
     YARA_RULES_DIR=/rules \
@@ -54,7 +55,7 @@ RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-yara-rule
 RUN sed -i \
       -e 's/^#\{0,1\}\(TCPSocket 3310\)/\1/' \
       -e 's/^#\{0,1\}\(TCPAddr .*\)/TCPAddr 0.0.0.0/' \
-      -e 's/^#\{0,1\}\(LocalSocket .*\)/# LocalSocket disabled — TCP INSTREAM only (app connects via TCP 3310)/' \
+      -e 's|^#\{0,1\}\(LocalSocket .*\)|LocalSocket /tmp/clamd.sock|' \
       /etc/clamav/clamd.conf \
     && sed -i \
       -e 's/^#\{0,1\}\(NotifyClamd .*\)/# NotifyClamd disabled — bootstrap downloads run before clamd starts/' \

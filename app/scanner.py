@@ -33,7 +33,7 @@ class ScannerUnavailableError(RuntimeError):
 class Scanner(Protocol):
     engine: str
 
-    def scan(self, data: bytes) -> ScanResult: ...
+    def scan(self, data: bytes, path: Path | None = None) -> ScanResult: ...
 
 
 class ClamdScanner:
@@ -68,10 +68,39 @@ class ClamdScanner:
         except OSError:
             return False
 
-    def scan(self, data: bytes) -> ScanResult:
+    def scan(self, data: bytes, path: Path | None = None) -> ScanResult:
+        if path is not None and settings.clamd_socket:
+            return self._scan_fd(path)
         if len(data) > settings.stream_scan_max_size:
             return self._scan_file(data)
         return self._scan_stream(data)
+
+    def _scan_fd(self, path: Path) -> ScanResult:
+        """Scan via FD_PASS over the Unix socket: the fd is passed with SCM_RIGHTS and
+        clamd reads the file itself — no StreamMaxLength cap, no app-file permission
+        issues, works for multi-GB samples."""
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            with self._connect() as sock:
+                sock.sendmsg(
+                    [b"zFD_PASS\0"],
+                    [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack("i", fd))],
+                )
+                response = b""
+                while b"\n" not in response and b"\x00" not in response:
+                    part = sock.recv(4096)
+                    if not part:
+                        break
+                    response += part
+        finally:
+            os.close(fd)
+        text = response.decode(errors="replace").replace("\x00", "").strip()
+        if text.endswith("OK"):
+            return ScanResult("clean", None, self.engine, text)
+        match = re.search(r"(.+?)\s+FOUND$", text)
+        if match:
+            return ScanResult("infected", match.group(1), self.engine, text)
+        raise ScannerUnavailableError(f"unexpected clamd response: {text!r}")
 
     def _scan_file(self, data: bytes) -> ScanResult:
         """Scan a large sample via clamd's file-based SCAN command (INSTREAM is
@@ -167,10 +196,16 @@ class ClamscanScanner:
     def available(self) -> bool:
         return shutil.which(self._path) is not None
 
-    def scan(self, data: bytes) -> ScanResult:
+    def scan(self, data: bytes, path: Path | None = None) -> ScanResult:
+        # with a stored file, let clamscan read it directly instead of via stdin
+        cmd = (
+            [self._path, "--stdout", str(path)]
+            if path is not None
+            else [self._path, "--stdout", "-"]
+        )
         proc = subprocess.run(
-            [self._path, "--stdout", "-"],
-            input=data,
+            cmd,
+            input=None if path is not None else data,
             capture_output=True,
             timeout=settings.clamscan_timeout,
         )
@@ -178,7 +213,8 @@ class ClamscanScanner:
         err = proc.stderr.decode(errors="replace")
         if proc.returncode == 2:
             raise ScannerUnavailableError(f"clamscan failed: {err.strip()}")
-        match = re.search(r"^stdin:\s+(.+?)\s+FOUND$", out, re.MULTILINE)
+        # clamscan prints "stdin: <sig> FOUND" for stdin and "<path>: <sig> FOUND" for files
+        match = re.search(r"^.*:\s+(.+?)\s+FOUND$", out, re.MULTILINE)
         if proc.returncode == 1 and match:
             return ScanResult("infected", match.group(1), self.engine, out.strip())
         return ScanResult("clean", None, self.engine, out.strip())
@@ -231,9 +267,14 @@ class YaraScanner:
         if stamp != self._stamp:
             self._load()
 
-    def scan(self, data: bytes) -> list[str]:
+    def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
-        return sorted({m.rule for rules in self._rules for m in rules.match(data=data)})
+        matches = (
+            (m for rules in self._rules for m in rules.match(filepath=str(path)))
+            if path is not None
+            else (m for rules in self._rules for m in rules.match(data=data))
+        )
+        return sorted({m.rule for m in matches})
 
 
 @lru_cache(maxsize=1)

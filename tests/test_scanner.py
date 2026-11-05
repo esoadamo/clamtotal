@@ -3,6 +3,7 @@ import shutil
 import socket
 import stat
 import struct
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -48,6 +49,90 @@ class FakeSocket:
 
     def __exit__(self, *args):
         return False
+
+
+class FdPassSocket(FakeSocket):
+    """Fake AF_UNIX socket that records sendmsg() ancillary data (SCM_RIGHTS fd)."""
+
+    def __init__(self, response: bytes):
+        super().__init__(response)
+        self.msgs: list[bytes] = []
+        self.cmsgs: list[tuple] = []
+
+    def sendmsg(self, data, cmsgs):
+        self.msgs.append(b"".join(data))
+        self.cmsgs.extend(cmsgs)
+
+
+def test_clamd_fdpass_over_unix_socket(monkeypatch, tmp_path):
+    # with CLAMD_SOCKET set and a stored path, scan() uses FD_PASS (SCM_RIGHTS),
+    # bypassing both StreamMaxLength and app-file permission issues
+    monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
+    monkeypatch.setattr(settings, "stream_scan_max_size", 8)  # data alone would exceed it
+    p = tmp_path / "big.bin"
+    p.write_bytes(b"x" * 100)
+    fake = FdPassSocket(b"OK\x00")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
+    result = ClamdScanner().scan(b"x" * 100, path=p)
+    assert result.verdict == "clean"
+    assert fake.msgs == [b"zFD_PASS\x00"]
+    assert any(c[0] == socket.SOL_SOCKET and c[1] == socket.SCM_RIGHTS for c in fake.cmsgs)
+
+
+def test_clamd_fdpass_infected_and_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
+    p = tmp_path / "e.bin"
+    p.write_bytes(b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE")
+    fake = FdPassSocket(b"Win.Test.EICAR_HDB-1 FOUND\x00")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
+    result = ClamdScanner().scan(b"x", path=p)
+    assert result.verdict == "infected" and result.signature == "Win.Test.EICAR_HDB-1"
+    fake2 = FdPassSocket(b"Access denied. ERROR\x00")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake2)
+    with pytest.raises(ScannerUnavailableError, match="unexpected clamd response"):
+        ClamdScanner().scan(b"x", path=p)
+    # clamd closes the connection without answering -> empty response, same error
+    fake3 = FdPassSocket(b"")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake3)
+    with pytest.raises(ScannerUnavailableError, match="unexpected clamd response"):
+        ClamdScanner().scan(b"x", path=p)
+
+
+def test_clamd_scan_routes_without_socket_or_path(monkeypatch):
+    # no CLAMD_SOCKET / no path -> INSTREAM for small, file-based SCAN for large
+    monkeypatch.setattr(settings, "clamd_socket", None)
+    monkeypatch.setattr(settings, "stream_scan_max_size", 8)
+    fake = FakeSocket(b"stream: OK\x00")
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
+    assert ClamdScanner().scan(b"12345").verdict == "clean"
+    assert fake.sent.startswith(b"zINSTREAM\x00")
+
+
+def test_clamscan_scans_stored_path_directly(monkeypatch, tmp_path):
+    p = tmp_path / "s.bin"
+    p.write_bytes(b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE")
+    calls = []
+
+    def fake_run(cmd, input=None, **kwargs):
+        calls.append((cmd, input))
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "ClamAV 1.0", "")
+        return subprocess.CompletedProcess(cmd, 1, b"path: Win.Test.EICAR_HDB-1 FOUND\n", b"")
+
+    monkeypatch.setattr(shutil, "which", lambda p: "/usr/bin/clamscan")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = ClamscanScanner().scan(b"ignored", path=p)
+    assert result.verdict == "infected"
+    assert calls[-1][0][-1] == str(p) and calls[-1][1] is None  # path arg, no stdin
+
+
+def test_yara_scanner_matches_filepath(monkeypatch, tmp_path):
+    (tmp_path / "r.yar").write_text("rule r1 { condition: true }")
+    monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
+    p = tmp_path / "f.bin"
+    p.write_bytes(b"whatever")
+    assert YaraScanner(str(tmp_path)).scan(b"whatever", path=p) == ["r1"]
+    assert YaraScanner(str(tmp_path)).scan(b"whatever") == ["r1"]
 
 
 @pytest.fixture(autouse=True)

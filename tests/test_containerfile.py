@@ -94,11 +94,13 @@ def test_entrypoint_runs_alembic_migrations():
     assert "alembic upgrade head" in ep  # otherwise the container starts with no tables
 
 
-def test_clamd_uses_tcp_only_no_local_socket():
-    # rootless podman: /var/run/clamav is not writable, so clamd dies on LocalSocket;
-    # the app only needs TCP INSTREAM on 3310
+def test_clamd_unix_socket_in_tmp_plus_tcp():
+    # LocalSocket lives in /tmp (writable by the clamav user even under rootless podman,
+    # where /var/run/clamav is not) so the app can use FD_PASS for large files; TCP 3310
+    # stays available for INSTREAM
     cf = (ROOT / "Containerfile").read_text()
-    assert "LocalSocket disabled" in cf
+    assert "LocalSocket /tmp/clamd.sock" in cf
+    assert "CLAMD_SOCKET=/tmp/clamd.sock" in cf
     assert "TCPSocket 3310" in cf and "TCPAddr 0.0.0.0" in cf
 
 

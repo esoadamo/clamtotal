@@ -244,6 +244,7 @@ def _scan_and_store(
     file_name: str,
     rescan: bool,
     depth: int = 0,
+    path: Path | None = None,
 ) -> tuple[Scan, bool]:
     """Scan with all local engines, run offline analysis, persist. Returns (scan, was_cached)."""
     hashes = compute_hashes(data)
@@ -252,7 +253,7 @@ def _scan_and_store(
         return existing, True
 
     # multi-engine verdicts: ClamAV (clamd/clamscan) + local YARA rules
-    result = scanner.scan(data)
+    result = scanner.scan(data, path=path)
     engines = [{"name": result.engine, "verdict": result.verdict, "signature": result.signature}]
     yara = get_yara_scanner()
     if yara is not None:
@@ -357,10 +358,10 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     return _render_index(request, db)
 
 
-def _run_scan(data: bytes, file_name: str) -> None:
+def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
     """Background task: scan with all engines and mark the row done."""
     with SessionLocal() as db:
-        scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True)
+        scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True, path=path)
     if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
         (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
 
@@ -368,7 +369,7 @@ def _run_scan(data: bytes, file_name: str) -> None:
 def _run_scan_file(path: Path, file_name: str) -> None:
     """Background scan of an already-stored sample: the file is read once here, in the
     background, instead of holding the whole upload in the request's memory."""
-    _run_scan(path.read_bytes(), file_name)
+    _run_scan(path.read_bytes(), file_name, path=path)
 
 
 def _enqueue_scan(
