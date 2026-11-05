@@ -80,7 +80,13 @@ class ClamdScanner:
         it can traverse and be world-readable — a 0600 file in /tmp makes clamd
         answer "Access denied. ERROR". The temp file is removed afterwards."""
         scan_dir = Path(settings.upload_dir) / ".clamd-scan"
-        scan_dir.mkdir(parents=True, exist_ok=True, mode=0o755)  # clamd may run as another user
+        scan_dir.mkdir(parents=True, exist_ok=True)
+        # clamd usually runs as a different user than the app: it must be able to
+        # traverse UPLOAD_DIR and .clamd-scan and read the temp file. chmod (unlike
+        # mkdir's mode=) is not masked by the process umask and also fixes dirs that
+        # already exist with restrictive permissions.
+        os.chmod(settings.upload_dir, 0o755)  # nosec B103
+        os.chmod(scan_dir, 0o755)  # nosec B103
         fd, path = tempfile.mkstemp(prefix="clamtotal-scan-", dir=scan_dir)
         try:
             with os.fdopen(fd, "wb") as f:

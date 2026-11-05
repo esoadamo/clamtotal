@@ -127,6 +127,9 @@ def test_clamd_large_file_scanned_via_temp_file(monkeypatch, tmp_path):
     # temp file lives in UPLOAD_DIR/.clamd-scan (traversable by the clamd user), not /tmp
     assert mkstemp_calls[0]["dir"] == scan_dir
     assert scan_dir.is_dir()
+    # dirs are explicitly chmod'ed 0755 (umask-proof) so the clamd user can traverse them
+    assert stat.S_IMODE(os.stat(scan_dir).st_mode) == 0o755
+    assert stat.S_IMODE(os.stat(settings.upload_dir).st_mode) == 0o755
 
 
 def test_clamd_large_file_access_denied_has_clear_error(monkeypatch, tmp_path):
