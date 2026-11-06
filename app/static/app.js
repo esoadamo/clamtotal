@@ -633,7 +633,7 @@
     input.addEventListener('change', function () { if (input.files.length) onFileSelected(input.files[0]); });
     form.addEventListener('submit', function (e) { e.preventDefault(); });
     ['dragover', 'dragenter'].forEach(function (ev) {
-      dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#d97706'; });
+      dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = '#4a8fe2'; });
     });
     ['dragleave', 'drop'].forEach(function (ev) {
       dz.addEventListener(ev, function (e) { e.preventDefault(); dz.style.borderColor = ''; });

@@ -1,58 +1,107 @@
 {% extends "base.html" %}
 {% block title %}ClamTotal — file analysis{% endblock %}
 {% block content %}
-<h1 class="hero-title">Analyze suspicious <em>files</em> and URLs</h1>
-<div class="card">
-  <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}" data-ws-upload="{{ '1' if ws_enabled else '0' }}" data-ws-chunk-size="{{ ws_chunk_size | default(0) }}">
-    <div class="dropzone" id="dropzone">
-      <div id="dz-idle">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#0f766e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0f766e" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-        <div class="dz-title">Drag and drop a file here to scan it</div>
-        <div>Maximum file size: 512 MB</div>
-        <div class="dz-or">or</div>
-        <label class="btn" for="file-input">Browse files</label>
-        <input id="file-input" type="file" name="file" required style="display:none">
-      </div>
-      <div id="dz-progress" style="display:none">
-        <div class="spinner" id="dz-spinner" style="display:none"></div>
-        <div class="dz-status" id="dz-status">Uploading…</div>
-        <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
-      </div>
-      <div id="dz-error" class="dz-status" style="display:none; color: var(--vt-red)"></div>
+<div class="vt-home">
+  <div class="vt-logo">
+    <svg width="44" height="44" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#4a8fe2"/>
+      <path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+    <span>Clam<em>Total</em></span>
+  </div>
+  <p class="vt-tagline">Analyse suspicious files and URLs to detect malware — scanned locally on this server, nothing is shared with anyone.</p>
+
+  <div class="card vt-widget">
+    <div class="tabs vt-tabs">
+      <button class="tab active" data-tab="file" type="button">File</button>
+      <button class="tab" data-tab="url" type="button">URL</button>
+      <button class="tab" data-tab="search" type="button">Search</button>
     </div>
-  </form>
+
+    <section id="tab-file" class="tab-panel active">
+      <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}" data-ws-upload="{{ '1' if ws_enabled else '0' }}" data-ws-chunk-size="{{ ws_chunk_size | default(0) }}">
+        <div class="dropzone" id="dropzone">
+          <div id="dz-idle">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke="#4a8fe2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#4a8fe2" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <div class="dz-title">Drag and drop a file here to scan it</div>
+            <div>Maximum file size: 512 MB</div>
+            <div class="dz-or">or</div>
+            <label class="btn" for="file-input">Choose file</label>
+            <input id="file-input" type="file" name="file" required style="display:none">
+          </div>
+          <div id="dz-progress" style="display:none">
+            <div class="spinner" id="dz-spinner" style="display:none"></div>
+            <div class="dz-status" id="dz-status">Uploading…</div>
+            <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+          </div>
+          <div id="dz-error" class="dz-status" style="display:none; color: var(--red)"></div>
+        </div>
+      </form>
+    </section>
+
+    <section id="tab-url" class="tab-panel">
+      <form action="/ui/url/lookup" method="get" id="url-form">
+        <div class="dropzone">
+          <div class="dz-title" style="font-size:16px">Paste a URL or domain to check it</div>
+          <div style="display:flex; gap:8px; max-width:520px; margin:16px auto 0">
+            <input type="text" name="url" id="url-input" required
+                   placeholder="https://example.com/path"
+                   style="flex:1; height:40px; border:1px solid var(--border); border-radius:8px; background:var(--field); color:var(--text); padding:0 12px; font-family:inherit; font-size:14px">
+            <button class="btn" type="submit" style="height:40px">Check</button>
+          </div>
+          <div class="muted" style="margin-top:12px; font-size:12.5px">Checked against the downloaded blocklists (malware, gambling, ads, …) — see the <a href="/healthz">feed status</a>.</div>
+        </div>
+      </form>
+    </section>
+
+    <section id="tab-search" class="tab-panel">
+      <form action="/ui/search" method="get" id="home-search-form">
+        <div class="dropzone">
+          <div class="dz-title" style="font-size:16px">Search by hash, file name, URL, domain or IP</div>
+          <div style="display:flex; gap:8px; max-width:520px; margin:16px auto 0">
+            <input type="text" name="q" id="home-search-input" required
+                   placeholder="e.g. d41d8cd98f00b204e9800998ecf8427e"
+                   style="flex:1; height:40px; border:1px solid var(--border); border-radius:8px; background:var(--field); color:var(--text); padding:0 12px; font-family:inherit; font-size:14px">
+            <button class="btn" type="submit" style="height:40px">Search</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <p class="vt-notice">
+    By submitting data above, you are agreeing to our <a href="/ui/terms">Terms of Service</a> and
+    <a href="/ui/privacy">Privacy Notice</a>. Please do not submit any personal information;
+    we are not responsible for the contents of your submission.
+    <a href="/ui/terms">Learn more</a>
+  </p>
+
+  <div class="vt-api-bar">Want to automate submissions? Check our <a href="/docs">API</a>.</div>
+
+  {% if recent %}
+  <div class="card" style="text-align:left">
+    <h2>Recently analyzed files</h2>
+    <table>
+      <thead><tr><th>File name</th><th>SHA-256</th><th>Detection</th><th>Last analysis</th></tr></thead>
+      <tbody>
+        {% for scan in recent %}
+        <tr>
+          <td><a href="/ui/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
+          <td class="mono">{{ scan.sha256[:20] }}…</td>
+          <td>
+            {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}
+            {% set total = (scan.engines or []) | length %}
+            <span class="badge {{ 'malicious' if det else 'harmless' }}">{{ det }}/{{ total }}</span>
+          </td>
+          <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 </div>
-<div class="card">
-  <h2>Check a URL or domain</h2>
-  <form class="appbar-search" style="max-width:none" action="/ui/url/lookup" method="get" id="url-form">
-    <input type="text" name="url" id="url-input" placeholder="Paste a URL or domain, e.g. https://example.com/path" required>
-    <button type="submit">Check</button>
-  </form>
-  <p class="muted" style="margin:10px 0 0">Checked against downloaded blocklists (malware, phishing, gambling, ads, ...) — see the <a href="/healthz">feed status</a>.</p>
-</div>
-{% if recent %}
-<div class="card">
-  <h2>Recently analyzed files</h2>
-  <table>
-    <thead><tr><th>File name</th><th>SHA-256</th><th>Detection</th><th>Last analysis</th></tr></thead>
-    <tbody>
-      {% for scan in recent %}
-      <tr>
-        <td><a href="/ui/file/{{ scan.sha256 }}">{{ scan.file_name }}</a></td>
-        <td class="mono">{{ scan.sha256[:20] }}…</td>
-        <td>
-          {% set det = (scan.engines or []) | selectattr('verdict', 'equalto', 'infected') | list | length %}
-          {% set total = (scan.engines or []) | length %}
-          <span class="badge {{ 'malicious' if det else 'harmless' }}">{{ det }}/{{ total }}</span>
-        </td>
-        <td class="muted">{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
 {% endblock %}

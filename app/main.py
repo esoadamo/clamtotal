@@ -237,8 +237,8 @@ _HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
 
 _FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-    '<path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#0f766e"/>'
-    '<path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#fbbf24" stroke-width="3" fill="none" '
+    '<path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#4a8fe2"/>'
+    '<path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#1a1a2e" stroke-width="3" fill="none" '
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 
@@ -973,6 +973,12 @@ def rescan(
         raise HTTPException(status_code=404, detail="stored sample not found")
     _enqueue_scan(background_tasks, db, stored.read_bytes(), scan.file_name, rescan=True)
     return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
+
+
+@app.get("/ui/terms", response_class=HTMLResponse)
+def terms(request: Request) -> HTMLResponse:
+    _rate_limit(request, settings.rate_limit_browse, "browse")
+    return templates.TemplateResponse(request, "terms.html")
 
 
 @app.get("/ui/privacy", response_class=HTMLResponse)

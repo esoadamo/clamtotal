@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Terms of Service — ClamTotal{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 style="font-size:20px; text-transform:none; letter-spacing:0; color:var(--text)">Terms of Service</h2>
+  <p>ClamTotal is a self-hosted file- and URL-analysis service. By using it you agree to the
+  following terms. If you do not agree, do not use the service.</p>
+
+  <h3 class="section-title" style="margin-top:20px">The service</h3>
+  <ul>
+    <li>ClamTotal is provided <strong>as is</strong>, without warranty of any kind. It is a
+      best-effort local scanner: a "harmless" verdict does not guarantee a file or URL is safe.</li>
+    <li>Scanning happens entirely on the server you are using. Nothing is sent to external
+      services (see the <a href="/ui/privacy">Privacy Notice</a>).</li>
+    <li>Do not submit personal information, illegal content, or content you are not
+      authorized to share. We are not responsible for the contents of your submission.</li>
+    <li>The operator may rate-limit, suspend, or stop the service at any time.</li>
+  </ul>
+</div>
+{% endblock %}

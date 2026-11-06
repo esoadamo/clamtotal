@@ -15,7 +15,7 @@ def test_static_js_served(client):
 
 
 def test_every_page_loads_app_js(client):
-    for path in ["/ui/", "/ui/search?q=x", f"/ui/file/{'a' * 64}"]:
+    for path in ["/ui/", "/ui/search?q=x", "/ui/terms", f"/ui/file/{'a' * 64}"]:
         page = client.get(path)
         assert page.status_code in (200, 404)
         # script URL is versioned with the build stamp to bust browser/CDN caches
@@ -161,6 +161,38 @@ def test_done_report_contract(client):
     assert "data-sha=" not in page.text
 
 
+def test_home_virustotal_layout_contract(client):
+    home = client.get("/ui/").text
+    # VT-style home: centered logo + tagline + FILE/URL/SEARCH widget tabs
+    assert 'class="vt-logo"' in home and "vt-tagline" in home
+    for tab in ['data-tab="file"', 'data-tab="url"', 'data-tab="search"']:
+        assert tab in home, tab
+    for panel in ['id="tab-file"', 'id="tab-url"', 'id="tab-search"']:
+        assert panel in home, panel
+    # the upload form still lives in the FILE panel with the full JS contract
+    assert 'id="upload-form"' in home and 'action="/file/upload"' in home
+    # URL tab keeps the URL form contract
+    assert 'id="url-form"' in home and 'action="/ui/url/lookup"' in home
+    # ToS + privacy notice under the widget (VT-style) and the API bar below it
+    assert "vt-notice" in home
+    assert 'href="/ui/terms"' in home and "Terms of Service" in home
+    assert 'href="/ui/privacy"' in home and "Privacy Notice" in home
+    assert "not responsible for the contents of your submission" in home
+    assert "vt-api-bar" in home and 'href="/docs"' in home
+    # dark VirusTotal-like theme
+    assert "--bg: #1a1a2e" in home and "--brand: #4a8fe2" in home
+
+
+def test_terms_of_service_page(client):
+    page = client.get("/ui/terms")
+    assert page.status_code == 200
+    assert "Terms of Service" in page.text
+    assert "as is" in page.text
+    # linked from every page footer, next to the privacy policy
+    for path in ["/ui/", "/ui/search?q=x", "/ui/privacy"]:
+        assert 'href="/ui/terms"' in client.get(path).text, path
+
+
 def test_recent_table_contract(client):
     client.post("/file/upload", files={"file": ("row.bin", b"recent row")})
     home = client.get("/ui/")
@@ -185,7 +217,7 @@ def test_og_card_meta_on_all_pages(client):
         assert '<meta property="og:image" content="/static/og-card.svg">' in page, path
         assert '<meta property="og:site_name" content="ClamTotal">' in page, path
         assert '<meta name="twitter:card" content="summary_large_image">' in page, path
-        assert '<meta name="theme-color" content="#0f766e">' in page, path
+        assert '<meta name="theme-color" content="#1a1a2e">' in page, path
 
 
 def test_og_card_image_served(client):
