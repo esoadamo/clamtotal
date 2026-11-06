@@ -102,9 +102,13 @@ EOF
 workers="${UVICORN_WORKERS:-$(( $(nproc) * 2 ))}"
 [ "$workers" -gt 4 ] && workers=4
 echo "[entrypoint] starting uvicorn: workers=$workers log_level=${LOG_LEVEL:-info}"
+# The parent SIGKILLs any worker that does not answer its healthcheck ping within
+# --timeout-worker-healthcheck seconds (default 5) — long scans/rules compiles must
+# not get a worker killed mid-work, so raise it (override: UVICORN_WORKER_HEALTHCHECK_TIMEOUT)
+hc_timeout="${UVICORN_WORKER_HEALTHCHECK_TIMEOUT:-120}"
 # memory visibility: cgroup v2 then v1 limit/current, plus host MemTotal — a worker
 # dying with no traceback right after startup is the OOM killer; confirm against these
 echo "[entrypoint] memory: cgroup_limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo '?') cgroup_current=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo '?') host_MemTotal=$(awk '/^MemTotal/{print $2" kB"}' /proc/meminfo)"
 exec /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
   --workers "$workers" --proxy-headers --forwarded-allow-ips='*' \
-  --log-level "${LOG_LEVEL:-info}"
+  --log-level "${LOG_LEVEL:-info}" --timeout-worker-healthcheck "$hc_timeout"

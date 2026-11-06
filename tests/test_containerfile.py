@@ -49,6 +49,8 @@ def test_entrypoint_worker_count_configurable_capped_and_memory_logged():
     # memory visibility at startup so OOM kills ("Child process died", no traceback)
     # can be confirmed from the container logs
     assert "memory.max" in ep and "MemTotal" in ep
+    # parent must not SIGKILL a worker mid-scan: raise the healthcheck ping timeout
+    assert "--timeout-worker-healthcheck" in ep and "UVICORN_WORKER_HEALTHCHECK_TIMEOUT" in ep
 
 
 def test_signature_scripts_fail_gracefully_offline():
