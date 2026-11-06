@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # explicit MB. Rule groups that would exceed it are skipped instead of letting the
     # daemon get OOM-killed mid-compile.
     yara_rss_budget_mb: int = 0
+    # per-match timeout in seconds: a pathological sample (catastrophic regex
+    # backtracking) must not hang a yara daemon thread forever
+    yara_match_timeout: int = 60
     # recursive scan of archive members: max members per archive, max depth
     max_embedded_files: int = 10
     max_scan_depth: int = 2

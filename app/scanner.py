@@ -329,15 +329,37 @@ class YaraScanner:
             for p in Path(self._rules_dir).glob("**/*")
             if p.suffix in (".yar", ".yara") and p.is_file()
         )
+        budget = yara_rss_budget_mb()
+        rules: list = []
+        rules_count = 0
+        # fast path: when the whole set is small enough to fit the RSS budget in ONE
+        # combined object, compile it once — a single match() pass over the sample
+        # instead of one per group/file (measured compile cost ≈ 14x source bytes;
+        # use 30x to stay safe with regex-heavy rules)
+        total_src = sum(f.stat().st_size for f in files)
+        rss_now = rss_mb()
+        if (
+            files
+            and total_src < _COMBINED_MAX_SRC_BYTES
+            and (budget is None or rss_now is None or rss_now + total_src * 30 / 1e6 <= budget)
+        ):
+            try:
+                rules.append(
+                    yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(files)})
+                )
+                rules_count = sum(_count_rules(f) for f in files)
+            except yara.Error:
+                rules = []  # broken file somewhere: fall through to per-group loading
+                rules_count = 0
+            else:
+                self._commit_load(files, rules, rules_count)
+                return
         # compile per top-level source group (bundled rules = ".", each third_party/<name>
         # its own group) so the RSS budget check can skip a whole set BEFORE compiling
         # it — a combined compile of everything would spike past the limit in one go
         groups: dict[str, list[Path]] = {}
         for f in files:
             groups.setdefault(str(f.parent.relative_to(self._rules_dir)), []).append(f)
-        budget = yara_rss_budget_mb()
-        rules: list = []
-        rules_count = 0
         for key in sorted(groups):
             group_files = groups[key]
             src_bytes = sum(f.stat().st_size for f in group_files)
@@ -384,6 +406,9 @@ class YaraScanner:
                     rules_count += _count_rules(f)
                 except yara.Error:
                     continue
+        self._commit_load(files, rules, rules_count)
+
+    def _commit_load(self, files: list[Path], rules: list, rules_count: int) -> None:
         try:
             stamp = self._stamp_path.stat().st_mtime_ns
         except OSError:
@@ -431,6 +456,18 @@ class YaraScanner:
             self._reloading = threading.Thread(target=self._load, daemon=True)
             self._reloading.start()
 
+    def _match_one(self, rules, data: bytes, path: Path | None, use_path: bool) -> list:
+        try:
+            if use_path:
+                return rules.match(filepath=str(path), timeout=settings.yara_match_timeout)
+            return rules.match(data=data, timeout=settings.yara_match_timeout)
+        except yara.TimeoutError:
+            logger.warning(
+                "yara match timed out after %.0fs — sample skipped for this rule object",
+                settings.yara_match_timeout,
+            )
+            return []
+
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
         with self._lock:
@@ -440,15 +477,11 @@ class YaraScanner:
         # match by filepath (mmap) when the sample is on disk, else in-memory bytes
         use_path = path is not None and path.exists()
         if len(rules_list) == 1:
-            rules = rules_list[0]
-            matches = rules.match(filepath=str(path)) if use_path else rules.match(data=data)
+            matches = self._match_one(rules_list[0], data, path, use_path)
             return sorted({m.rule for m in matches})
-        # yara-python releases the GIL during match(), so per-file matches overlap
+        # yara-python releases the GIL during match(), so per-object matches overlap
         with ThreadPoolExecutor(max_workers=min(8, len(rules_list))) as pool:
-            if use_path:
-                results = pool.map(lambda r: r.match(filepath=str(path)), rules_list)
-            else:
-                results = pool.map(lambda r: r.match(data=data), rules_list)
+            results = pool.map(lambda r: self._match_one(r, data, path, use_path), rules_list)
             return sorted({m.rule for matches in results for m in matches})
 
 

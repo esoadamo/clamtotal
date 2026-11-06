@@ -464,12 +464,13 @@ def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):
 
 
 def test_yara_scanner_combines_rule_files_into_one_rules_object(tmp_path):
-    # duplicate rule names across files are fine: each file gets its own namespace
+    # duplicate rule names across files are fine: each file gets its own namespace;
+    # a small rule set compiles into ONE combined object -> single match() pass
     (tmp_path / "a.yar").write_text("rule Same { condition: true }")
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
     scanner = YaraScanner(str(tmp_path))
-    assert len(scanner._rules) == 2  # one compiled object per source group
+    assert len(scanner._rules) == 1
     assert scanner.scan(b"x") == ["Same"]
 
 
@@ -728,14 +729,30 @@ def test_yara_scanner_skips_rule_groups_over_rss_budget(tmp_path, monkeypatch, c
     (tmp_path / "a.yar").write_text("rule RA { condition: true }")
     (tmp_path / "big").mkdir()
     (tmp_path / "big" / "b.yar").write_text("rule RB { condition: true }")
-    monkeypatch.setattr(settings, "yara_rss_budget_mb", 100)
-    rss_values = iter([10.0, 500.0])  # first group fits, second is over budget
-    monkeypatch.setattr(scanner_module, "rss_mb", lambda: next(rss_values))
+    # tiny budget: the combined fast path is rejected and every group is over budget
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", 1)
     with caplog.at_level(logging.WARNING):
         scanner = YaraScanner(str(tmp_path))
-    assert "skipping rule group 'big'" in caplog.text
-    assert scanner.rules_count == 1  # only the first group was compiled
-    assert scanner.scan(b"x") == ["RA"]
+    assert "skipping rule group" in caplog.text
+    assert scanner.rules_count == 0 and not scanner.available()
+
+
+def test_yara_scan_match_timeout_returns_no_matches(tmp_path, monkeypatch, caplog):
+    import logging
+
+    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+
+    class TimeoutRules:
+        def match(self, **kwargs):
+            raise yara.TimeoutError("slow")
+
+    with caplog.at_level(logging.WARNING):
+        scanner._rules = [TimeoutRules()]
+        assert scanner.scan(b"x") == []
+    assert "timed out" in caplog.text
 
 
 def test_yara_scanner_big_group_compiles_per_file_with_budget_cutoff(tmp_path, monkeypatch, caplog):
@@ -747,7 +764,8 @@ def test_yara_scanner_big_group_compiles_per_file_with_budget_cutoff(tmp_path, m
     (tmp_path / "g" / "b.yar").write_text("rule RB { condition: true }")
     (tmp_path / "g" / "c.yar").write_text("rule RC { condition: true }")
     monkeypatch.setattr(settings, "yara_rss_budget_mb", 100)
-    rss_values = iter([10.0, 10.0, 500.0])  # third file's check exceeds the budget
+    # fast-path check + per-file checks for a, b, then c exceeds the budget
+    rss_values = iter([10.0, 10.0, 10.0, 500.0])
     monkeypatch.setattr(scanner_module, "rss_mb", lambda: next(rss_values))
     with caplog.at_level(logging.WARNING):
         scanner = YaraScanner(str(tmp_path))
