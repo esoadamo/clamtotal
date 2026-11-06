@@ -7,6 +7,18 @@
     <button type="submit">Search</button>
   </form>
 </div>
+{% if url_scan %}
+<div class="card">
+  <h2>URL / domain check</h2>
+  <p>
+    <a class="mono" href="/ui/url/{{ url_scan.url_id }}">{{ url_scan.url | defang }}</a>
+    <span class="badge {{ 'malicious' if url_scan.verdict == 'malicious' else 'harmless' }}">{{ url_scan.verdict }}</span>
+    {% for c in (url_scan.matches or []) | map(attribute='category') | unique | list %}
+    <span class="badge suspicious">{{ c }}</span>
+    {% endfor %}
+  </p>
+</div>
+{% endif %}
 <div class="card">
   <h2>Search results for “{{ q }}”</h2>
   {% if results %}

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-mkdir -p /data/uploads /rules
+mkdir -p /data/uploads /rules "${URL_BLOCKLIST_DIR:-/data/blocklists}"
 
 # Keep clamd's INSTREAM size cap in sync with the app's STREAM_SCAN_MAX_SIZE, which
 # defaults to MAX_UPLOAD_SIZE (512M): every accepted upload then goes via INSTREAM and
@@ -52,7 +52,19 @@ if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   fi
 fi
 
-# Periodic background autoupdater (freshclam + unofficial DBs + third-party YARA rules).
+# URL/domain blocklists for URL scanning (hagezi, StevenBlack, URLhaus with key, ...).
+# Non-fatal: without them file scanning still works and URL checks report "harmless"
+# with a "no blocklists loaded" note on the report page and /healthz.
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
+  blocklist_dir="${URL_BLOCKLIST_DIR:-/data/blocklists}"
+  if ! ls "$blocklist_dir"/*.txt >/dev/null 2>&1; then
+    echo "[bootstrap] no URL blocklists in $blocklist_dir - downloading..."
+    update-url-blocklists.sh || echo "[bootstrap] url blocklist download failed (offline?) - URL checks will report harmless until lists exist"
+  fi
+fi
+
+# Periodic background autoupdater (freshclam + unofficial DBs + third-party YARA rules
+# + URL blocklists).
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   (
     interval="${CLAM_UPDATE_INTERVAL:-21600}"  # 6h
@@ -60,6 +72,7 @@ if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
       sleep "$interval"
       update-signatures.sh || echo "[autoupdate] update failed; will retry next cycle"
       update-yara-rules.sh || echo "[autoupdate] yara rules update failed; will retry next cycle"
+      update-url-blocklists.sh || echo "[autoupdate] url blocklists update failed; will retry next cycle"
     done
   ) &
 fi

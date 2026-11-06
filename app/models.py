@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Integer, PrimaryKeyConstraint, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -48,4 +48,32 @@ class Scan(Base):
     embedded: Mapped[list[dict] | None] = mapped_column(
         JSON, nullable=True
     )  # recursive child scans
+    scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class BlocklistEntry(Base):
+    """One blocked domain/host from a downloaded URL blocklist. Composite key on
+    (domain, source): the same domain can be listed by several sources/categories."""
+
+    __tablename__ = "blocklist_entries"
+    __table_args__ = (PrimaryKeyConstraint("domain", "source"),)
+
+    domain: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(128))  # blocklist name (file stem)
+    category: Mapped[str] = mapped_column(String(64))  # e.g. malware, gambling, ads
+
+
+class UrlScan(Base):
+    """One checked URL/domain, keyed by its VT-style base64url id. Doubles as cache:
+    re-checking the same URL refreshes the row instead of re-scanning."""
+
+    __tablename__ = "url_scans"
+
+    url_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    url: Mapped[str] = mapped_column(Text)  # normalized URL as checked
+    host: Mapped[str] = mapped_column(String(255), index=True)
+    verdict: Mapped[str] = mapped_column(String(16))  # "malicious" | "harmless"
+    matches: Mapped[list[dict] | None] = mapped_column(
+        JSON, nullable=True
+    )  # [{domain, source, category}]
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

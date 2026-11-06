@@ -58,6 +58,47 @@ class FileReport(BaseModel):
     scanned_at: str = Field(description="ISO-8601 UTC timestamp of the last completed scan")
 
 
+class UrlMatch(BaseModel):
+    domain: str = Field(description="blocked domain/host that matched")
+    source: str = Field(description="blocklist source name, e.g. 'hagezi-tif'")
+    category: str = Field(description="blocklist category, e.g. 'malware' or 'gambling'")
+
+
+class UrlScanResponse(BaseModel):
+    """POST /api/v2/urls — URL/domain check result (synchronous local blocklist lookup)."""
+
+    id: str = Field(description="base64url id of the normalized URL, for GET /api/v2/urls/{id}")
+    url: str = Field(description="normalized URL that was checked")
+    verdict: str = Field(description="'malicious' when any blocklist matched, else 'harmless'")
+    categories: list[str] = Field(description="categories of the matched blocklists")
+    sources: list[str] = Field(description="blocklist sources that matched")
+    permalink: str = Field(description="UI report page path")
+
+
+class UrlReport(BaseModel):
+    """GET /api/v2/urls/{id} — full report for a checked URL/domain."""
+
+    id: str
+    url: str
+    host: str = Field(description="extracted host (domain or IP) that was looked up")
+    verdict: str = Field(description="'malicious' | 'harmless'")
+    matches: list[UrlMatch]
+    categories: list[str]
+    stats: dict[str, int] = Field(
+        description="VT-style counters: {'malicious': 1|0, 'harmless': 1|0}"
+    )
+    permalink: str
+    last_analysis: str = Field(description="ISO-8601 UTC timestamp of the last check")
+
+
+class BlocklistHealth(BaseModel):
+    enabled: bool = Field(description="whether URL_BLOCKLIST_DIR is set")
+    entries: int | None = Field(description="imported blocklist entries, null when disabled")
+    updated_at: str | None = Field(
+        default=None, description="ISO 8601 UTC timestamp of the last blocklist update"
+    )
+
+
 class EngineHealth(BaseModel):
     name: str = Field(description="engine display name, e.g. 'ClamAV (clamd)'")
     type: str = Field(description="'clamav' or 'yara'")
@@ -75,6 +116,9 @@ class HealthResponse(BaseModel):
         description="'ok' when at least one enabled engine is ready, else 'degraded'"
     )
     engines: list[EngineHealth] = Field(default_factory=list)
+    blocklists: BlocklistHealth = Field(
+        description="URL/domain blocklist feed status (not a scan engine; does not affect 'status')"
+    )
 
 
 class ChunkUploadResponse(BaseModel):

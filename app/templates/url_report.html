@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ scan.url }} — ClamTotal{% endblock %}
+{% block content %}
+{% set matches = scan.matches or [] %}
+<div class="card">
+  <div style="font-size:20px; font-weight:500; word-break:break-all">{{ scan.url | defang }}</div>
+  <div class="muted" style="margin-top:4px">Host: <span class="mono">{{ scan.host | defang }}</span></div>
+</div>
+
+<div class="card">
+  <div class="det-widget">
+    <div class="ring">
+      <svg width="120" height="120" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#e0e0e0" stroke-width="10"/>
+        <circle cx="60" cy="60" r="52" fill="none" stroke="{{ '#c52420' if scan.verdict == 'malicious' else '#39ac4c' }}" stroke-width="10"
+                stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="0"/>
+      </svg>
+      <div class="ring-num" style="color: {{ '#c52420' if scan.verdict == 'malicious' else '#39ac4c' }}">{{ matches | length }}</div>
+    </div>
+    <div>
+      <div class="det-text" style="color: {{ '#c52420' if scan.verdict == 'malicious' else '#39ac4c' }}">
+        {% if scan.verdict == "malicious" %}{{ matches | length }} blocklist{{ 's' if matches | length != 1 }} flagged this URL as malicious{% else %}No blocklist flagged this URL{% endif %}
+      </div>
+      <div class="det-sub">Verdict: <span class="badge {{ 'malicious' if scan.verdict == 'malicious' else 'harmless' }}">{{ scan.verdict }}</span>
+        · Last check: {{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</div>
+      {% if not blocklist_count %}
+      <div class="det-sub">No blocklist entries loaded yet — the lists are downloaded on first container launch and every 6h (CLAM_AUTOUPDATE=true).</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Detection</h2>
+  {% if matches %}
+  <table>
+    <thead><tr><th>Blocked host</th><th>Category</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for m in matches %}
+      <tr>
+        <td class="mono">{{ m.domain | defang }}</td>
+        <td><span class="badge {{ 'malicious' if m.category in ('malware', 'threat-intel', 'phishing') else 'suspicious' }}">{{ m.category }}</span></td>
+        <td>{{ m.source }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Not found in any of the {{ blocklist_count }} loaded blocklist entries.</p>
+  {% endif %}
+  <p class="muted" style="margin-top:12px">JSON API: <a class="mono" href="/api/v2/urls/{{ scan.url_id }}">/api/v2/urls/{{ scan.url_id }}</a></p>
+</div>
+{% endblock %}

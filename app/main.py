@@ -48,9 +48,10 @@ from app.analysis import (
     shannon_entropy_file,
     sniff_file_type,
 )
+from app.blocklists import blocklist_stats, ensure_blocklists_loaded, scan_url
 from app.config import settings
 from app.db import SessionLocal, get_db
-from app.models import Scan
+from app.models import Scan, UrlScan
 from app.scanner import (
     Scanner,
     ScannerUnavailableError,
@@ -64,12 +65,15 @@ from app.scanner import (
 )
 from app.schemas import (
     ApiScanResponse,
+    BlocklistHealth,
     ChunkUploadResponse,
     EngineHealth,
     ErrorResponse,
     FileReport,
     HealthResponse,
     UploadResponse,
+    UrlReport,
+    UrlScanResponse,
 )
 
 logger = logging.getLogger("app")
@@ -146,6 +150,7 @@ def _probe_scanner_at_startup() -> None:
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     _probe_scanner_at_startup()
     _recover_pending_scans_once()
+    ensure_blocklists_loaded()  # import downloaded URL blocklists (background if stale)
     rss = rss_mb()
     logger.info(
         "worker up: pid=%d rss=%s",
@@ -1000,6 +1005,9 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
         scan = _lookup(db, q)
         if scan is not None:
             return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
+    # a domain/URL query also gets a live blocklist verdict card above the file results
+    # (require_tld: only real IANA TLDs, so file names like "notes.txt" stay file searches)
+    url_scan = scan_url(db, q, require_tld=True) if q and settings.url_blocklist_dir else None
     results = []
     if q:
         like = f"%{q}%"
@@ -1025,7 +1033,9 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
             .scalars()
             .all()
         )
-    return templates.TemplateResponse(request, "search.html", {"q": q, "results": results})
+    return templates.TemplateResponse(
+        request, "search.html", {"q": q, "results": results, "url_scan": url_scan}
+    )
 
 
 @app.post(
@@ -1099,6 +1109,98 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
     )
 
 
+def _url_scan_or_none(db: Session, value: str, require_tld: bool = False) -> UrlScan | None:
+    if not settings.url_blocklist_dir:
+        raise ScannerUnavailableError(
+            "URL scanning disabled (URL_BLOCKLIST_DIR not set — the container sets it to "
+            "/data/blocklists)"
+        )
+    return scan_url(db, value, require_tld=require_tld)
+
+
+@app.post(
+    "/api/v2/urls",
+    response_model=UrlScanResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+def api_scan_url(
+    request: Request, url: str = Form(...), db: Session = Depends(get_db)
+) -> JSONResponse:
+    """VT-compatible URL check: the blocklist lookup is local and instant, so the
+    verdict comes back synchronously (no 202/pending dance like file scans)."""
+    _rate_limit(request, settings.rate_limit_upload, "upload")
+    scan = _url_scan_or_none(db, url)
+    if scan is None:
+        return JSONResponse(status_code=400, content={"detail": "not a valid URL or domain"})
+    matches = scan.matches or []
+    return JSONResponse(
+        {
+            "id": scan.url_id,
+            "url": scan.url,
+            "verdict": scan.verdict,
+            "categories": sorted({m["category"] for m in matches}),
+            "sources": sorted({m["source"] for m in matches}),
+            "permalink": f"/ui/url/{scan.url_id}",
+        }
+    )
+
+
+@app.get(
+    "/api/v2/urls/{url_id}",
+    response_model=UrlReport,
+    responses={404: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+)
+def api_url_report(url_id: str, db: Session = Depends(get_db)) -> JSONResponse:
+    scan = db.get(UrlScan, url_id)
+    if scan is None:
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    matches = scan.matches or []
+    malicious = scan.verdict == "malicious"
+    return JSONResponse(
+        {
+            "id": scan.url_id,
+            "url": scan.url,
+            "host": scan.host,
+            "verdict": scan.verdict,
+            "matches": matches,
+            "categories": sorted({m["category"] for m in matches}),
+            "stats": {"malicious": 1 if malicious else 0, "harmless": 0 if malicious else 1},
+            "permalink": f"/ui/url/{scan.url_id}",
+            "last_analysis": scan.scanned_at.isoformat(),
+        }
+    )
+
+
+@app.get("/ui/url/lookup", response_class=HTMLResponse)
+def url_lookup(request: Request, url: str = "", db: Session = Depends(get_db)) -> Response:
+    """Home-page/search URL form target: check the URL, then land on its report page."""
+    _rate_limit(request, settings.rate_limit_browse, "browse")
+    scan = _url_scan_or_none(db, url)
+    if scan is None:
+        raise HTTPException(status_code=400, detail="not a valid URL or domain")
+    return RedirectResponse(f"/ui/url/{scan.url_id}", status_code=303)
+
+
+@app.get("/ui/url/{url_id}", response_class=HTMLResponse)
+def url_report(request: Request, url_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    _rate_limit(request, settings.rate_limit_browse, "browse")
+    scan = db.get(UrlScan, url_id)
+    if scan is None:
+        return templates.TemplateResponse(
+            request, "not_found.html", {"hash_value": url_id}, status_code=404
+        )
+    blocklist_count, _ = blocklist_stats(db)
+    return templates.TemplateResponse(
+        request,
+        "url_report.html",
+        {"scan": scan, "blocklist_count": blocklist_count},
+    )
+
+
 def _iso_utc(ts: float | None) -> str | None:
     if ts is None:
         return None
@@ -1106,7 +1208,7 @@ def _iso_utc(ts: float | None) -> str | None:
 
 
 @app.get("/healthz", response_model=HealthResponse)
-def healthz() -> HealthResponse:
+def healthz(db: Session = Depends(get_db)) -> HealthResponse:
     """Service health plus per-engine readiness: whether each engine is enabled
     (ENABLED_SCANNERS), ready (clamd PING / clamscan present / YARA rules loaded),
     its version, rule count, and last rules update time."""
@@ -1171,4 +1273,11 @@ def healthz() -> HealthResponse:
             )
         )
     status = "ok" if any(e.enabled and e.ready for e in engines) else "degraded"
-    return HealthResponse(status=status, engines=engines)
+    # URL blocklist feed status: informational only (not a scan engine, so it does
+    # not affect the ok/degraded computation above)
+    if settings.url_blocklist_dir:
+        count, updated = blocklist_stats(db)
+        blocklists = BlocklistHealth(enabled=True, entries=count, updated_at=_iso_utc(updated))
+    else:
+        blocklists = BlocklistHealth(enabled=False, entries=None, updated_at=None)
+    return HealthResponse(status=status, engines=engines, blocklists=blocklists)

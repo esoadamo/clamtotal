@@ -25,6 +25,14 @@
     </div>
   </form>
 </div>
+<div class="card">
+  <h2>Check a URL or domain</h2>
+  <form class="appbar-search" style="max-width:none" action="/ui/url/lookup" method="get" id="url-form">
+    <input type="text" name="url" id="url-input" placeholder="Paste a URL or domain, e.g. https://example.com/path" required>
+    <button type="submit">Check</button>
+  </form>
+  <p class="muted" style="margin:10px 0 0">Checked against downloaded blocklists (malware, phishing, gambling, ads, ...) — see the <a href="/healthz">feed status</a>.</p>
+</div>
 {% if recent %}
 <div class="card">
   <h2>Recently analyzed files</h2>

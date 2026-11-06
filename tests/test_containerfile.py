@@ -229,6 +229,42 @@ def test_yara_forge_is_commented_optin_and_sources_config_is_mountable():
     assert "YARA_RULES_SOURCES" in (ROOT / "README.md").read_text()
 
 
+def test_url_blocklist_wiring():
+    cf = (ROOT / "Containerfile").read_text()
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    script = (ROOT / "scripts" / "update-url-blocklists.sh").read_text()
+    conf = (ROOT / "container" / "url-blocklist-sources.conf").read_text()
+    assert (ROOT / "scripts" / "update-url-blocklists.sh").exists()
+    assert "COPY scripts/update-url-blocklists.sh" in cf
+    assert "COPY container/url-blocklist-sources.conf" in cf
+    assert "URL_BLOCKLIST_DIR=/data/blocklists" in cf
+    assert "update-url-blocklists.sh" in cf.split("chmod +x")[1].split("&&")[0]
+    # entrypoint: bootstrap + periodic loop, gated on CLAM_AUTOUPDATE like the ClamAV updates
+    assert ep.count("update-url-blocklists.sh") >= 2
+    assert "CLAM_AUTOUPDATE" in ep
+    # the update script touches the stamp file so the app hot-reloads the lists
+    assert ".blocklists-stamp" in script
+    # URLhaus ships commented out: it needs a user-provided API key, substituted by
+    # the script from URLHAUS_AUTH_KEY (or baked into a mounted sources conf)
+    assert (
+        "# urlhaus|malware|https://urlhaus-api.abuse.ch/v2/files/exports/<URLHAUS_AUTH_KEY>/hostfile.txt"
+        in conf
+    )
+    assert "<URLHAUS_AUTH_KEY>" in script and "URLHAUS_AUTH_KEY" in script
+    # active default sources carry a category (malware / gambling / ads)
+    assert (
+        "hagezi-tif|malware|https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif.txt"
+        in conf
+    )
+    assert "|gambling|" in conf
+    # airgapped builds bake the blocklists at build time too
+    assert re.search(r'AIRGAPPED" = "true" \]; then .*update-url-blocklists\.sh', cf, re.S)
+    # compose documents the sources-conf mount and the URLHAUS_AUTH_KEY env var
+    compose = (ROOT / "compose.yaml").read_text()
+    assert "./url-blocklist-sources.conf:/etc/url-blocklist-sources.conf:ro" in compose
+    assert "URLHAUS_AUTH_KEY" in compose
+
+
 def test_compose_persists_yara_rules():
     # /rules must be a volume so auto-downloaded third-party rules survive restarts
     compose = (ROOT / "compose.yaml").read_text()

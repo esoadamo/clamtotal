@@ -29,12 +29,16 @@ Features (all fully offline, no login, no community features):
 - SQLite storage via SQLAlchemy + Alembic; scan results are cached by SHA-256
   (re-uploading the same file returns the cached report instantly)
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
-- Search by MD5/SHA-1/SHA-256 or file name, sample download, forced rescan
+- **URL/domain scanning** against periodically downloaded, categorized blocklists: `POST /api/v2/urls` (form field `url`) and `GET /api/v2/urls/{id}` (VT-style base64url id), a report page at `/ui/url/{id}`, a "Check a URL or domain" box on the home page, and a live verdict card when a search query is a domain/URL. Matches show the **category** (malware, gambling, ads-malware, ...) and the source list. Defaults: HaGeZi TIF (malware/phishing/scam), HaGeZi gambling, StevenBlack hosts; the URLhaus hostfile (malware distribution) is commented out and needs your free `URLHAUS_AUTH_KEY`
+- Search by MD5/SHA-1/SHA-256, file name, URL/domain, sample download, forced rescan
 - Indicators are **defanged** in the UI (`hxxp://`, `[.]`) so they are never clickable/loaded; IPs preceded by `version`/`v` are not misdetected; domains require a real IANA TLD and a second-level label of >= 5 chars
 - UI is served at both `/` and `/ui/` (home, file reports, search). API: `POST /file/upload`, `/api/v2/...`
 - Minimal VT-compatible JSON API: `POST /api/v2/files` (returns `202` + `sha256` and
   scans asynchronously, or `200` with `cached: true` if the hash was already
-  analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`)
+  analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`),
+  `POST /api/v2/urls` + `GET /api/v2/urls/{id}` for URL/domain checks (synchronous
+  local blocklist lookup, verdict + categories), `/healthz` includes a `blocklists`
+  feed status
 - VT-style UX flow: the browser hashes the file (SHA-256) and checks
   `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
   report; new files ask for confirmation, then upload with a progress bar plus
@@ -109,6 +113,18 @@ local YARA engine's source list can be overridden with
 `YARA_RULES_SOURCES`) — see `container/yara-rules-sources.conf` for the format;
 it ships with a commented YARA Forge opt-in whose mixed licenses you must accept first.
 
+URL/domain blocklists are downloaded by `scripts/update-url-blocklists.sh` into
+`/data/blocklists` (a named volume via `/data`) on first launch and on the same 6-hour
+loop, from the categorized sources in `container/url-blocklist-sources.conf`
+(`<name>|<category>|<url>` per line). The app imports them into SQLite and hot-reloads
+without a restart when `.blocklists-stamp` changes. Customize with
+`-v ./url-blocklist-sources.conf:/etc/url-blocklist-sources.conf:ro` (or
+`URL_BLOCKLIST_SOURCES`); drop your own `*.txt` files into `/data/blocklists` with a
+`# clamtotal-category: <category>` header. The URLhaus source needs a free API key
+(https://urlhaus.abuse.ch/api/): set `URLHAUS_AUTH_KEY` (the updater substitutes it
+into the `<URLHAUS_AUTH_KEY>` placeholder) or bake the key into a mounted conf.
+Blocklist updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=false`.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Description |
@@ -138,6 +154,9 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 
 Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon compiles the rule set once; with all default third-party YARA sources that is several GB. If the daemon or workers get OOM-killed (`Killed`/`Child process died` with no traceback), raise the container memory limit (compose `mem_limit: 8g`) or trim `container/yara-rules-sources.conf` (signature-base is disabled by default for this reason). |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
+| `URL_BLOCKLIST_DIR` | unset (container: `/data/blocklists`) | directory with downloaded URL/domain blocklists (`<name>.txt` + `.blocklists-stamp`); empty disables URL scanning |
+| `URL_BLOCKLIST_SOURCES` | `/etc/url-blocklist-sources.conf` | URL blocklist sources (`name|category|url`) for `scripts/update-url-blocklists.sh` |
+| `URLHAUS_AUTH_KEY` | unset | free URLhaus API key substituted into the `<URLHAUS_AUTH_KEY>` placeholder of the (commented-out) urlhaus source |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
