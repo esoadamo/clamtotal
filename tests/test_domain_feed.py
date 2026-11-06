@@ -390,12 +390,14 @@ def test_url_report_has_file_report_ui_and_relations(client, feed_dir):
     r = client.get("/ui/url/lookup", params={"url": "www.evil-example.com"}, follow_redirects=False)
     assert r.status_code == 303
     page = client.get(r.headers["location"]).text
-    # same UI as the file report: header card, detection ring, tabbed card
+    # same UI as the file report: header card with Reanalyze, detection ring, tabbed card
     assert 'class="tabs"' in page
     assert 'data-tab="detection"' in page and 'data-tab="details"' in page
     assert "det-widget" in page and "ring-num" in page
     assert 'id="detection-engines"' in page
     assert "malicious" in page and "hagezi-tif" in page and "malware" in page
+    assert f'action="/ui/url/{r.headers["location"].rsplit("/", 1)[-1]}/rescan"' in page
+    assert "Reanalyze" in page
     # relations tab links back to the file containing this domain
     assert 'data-tab="relations"' in page
     assert "evil.bin" in page and f"/ui/file/{sha}" in page
@@ -497,3 +499,32 @@ def test_url_scan_rate_limited(client, monkeypatch):
     for _ in range(2):
         assert client.post("/api/v2/urls", data={"url": "http://example.com/"}).status_code == 200
     assert client.post("/api/v2/urls", data={"url": "http://example.com/"}).status_code == 429
+
+
+def test_url_rescan_endpoint(client, feed_dir, monkeypatch):
+    _seed(feed_dir)
+    reset_domain_feed_cache()
+    ok = client.post("/api/v2/urls", data={"url": "new-example.com"}).json()
+    assert ok["verdict"] == "harmless"
+    # feed gains an entry -> rescan flips the verdict
+    (feed_dir / "extra.txt").write_text("# clamtotal-category: phishing\nnew-example.com\n")
+    (feed_dir / feed.STAMP_NAME).touch()
+    import time as _t
+
+    for _ in range(50):  # let the background reload land
+        reset_domain_feed_cache()
+        f = get_domain_feed()
+        if isinstance(f, DomainFeed) and f.lookup("new-example.com"):
+            break
+        _t.sleep(0.1)
+    r = client.post(f"/ui/url/{ok['id']}/rescan", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/ui/url/{ok['id']}"
+    report = client.get(f"/api/v2/urls/{ok['id']}").json()
+    assert report["verdict"] == "malicious" and report["categories"] == ["phishing"]
+    # unknown id -> 404; feed down -> 503
+    assert client.post("/ui/url/nope/rescan").status_code == 404
+    monkeypatch.setattr(settings, "domain_feed_dir", "")
+    monkeypatch.setattr(settings, "domain_feed_socket", "")
+    reset_domain_feed_cache()
+    assert client.post(f"/ui/url/{ok['id']}/rescan").status_code == 503
+    reset_domain_feed_cache()

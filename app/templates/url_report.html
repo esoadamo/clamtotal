@@ -3,6 +3,8 @@
 {% block content %}
 {% set matches = scan.matches or [] %}
 {% set malicious = scan.verdict == "malicious" %}
+{% set det = 1 if malicious else 0 %}
+{% set total = 1 %}
 {% set ring_color = '#c52420' if malicious else '#39ac4c' %}
 
 <div class="card">
@@ -13,7 +15,11 @@
         Host: <span class="mono">{{ scan.host | defang }}</span> · <span class="mono">{{ scan.url_id }}</span>
       </div>
     </div>
-    <div><span class="badge {{ 'malicious' if malicious else 'harmless' }}">{{ scan.verdict }}</span></div>
+    <div style="display:flex; gap:8px">
+      <form action="/ui/url/{{ scan.url_id }}/rescan" method="post">
+        <button class="btn outline" type="submit">Reanalyze</button>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -24,15 +30,15 @@
         <circle cx="60" cy="60" r="52" fill="none" stroke="#e0e0e0" stroke-width="10"/>
         <circle cx="60" cy="60" r="52" fill="none" stroke="{{ ring_color }}" stroke-width="10"
                 stroke-linecap="round" stroke-dasharray="326.7"
-                stroke-dashoffset="{{ 326.7 * (1 - (1 if malicious else 0)) }}"/>
+                stroke-dashoffset="{{ 326.7 * (1 - (det / total)) }}"/>
       </svg>
-      <div class="ring-num" style="color: {{ ring_color }}">{{ 1 if malicious else 0 }}/1</div>
+      <div class="ring-num" style="color: {{ ring_color }}">{{ det }}/{{ total }}</div>
     </div>
     <div>
       <div class="det-text" style="color: {{ ring_color }}">
-        {% if malicious %}The domain feed flagged this URL as malicious{% else %}The domain feed has no entry for this URL{% endif %}
+        {% if malicious %}1 of 1 engines flagged this URL as malicious{% else %}No engines flagged this URL as malicious{% endif %}
       </div>
-      <div class="det-sub">Last check: {{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC · Detection ratio: {{ 1 if malicious else 0 }}/1</div>
+      <div class="det-sub">Last analysis: {{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC · Detection ratio: {{ det }}/{{ total }}</div>
       {% if not feed_count %}
       <div class="det-sub">No domain-feed entries loaded yet — the feed is downloaded on first container launch and every 6h (CLAM_AUTOUPDATE=true).</div>
       {% endif %}
@@ -49,7 +55,7 @@
 
   <section id="tab-detection" class="tab-panel active">
     <table>
-      <thead><tr><th style="width:40px"></th><th>Feed source</th><th>Result</th></tr></thead>
+      <thead><tr><th style="width:40px"></th><th>Engine</th><th>Result</th></tr></thead>
       <tbody id="detection-engines">
         {% for m in matches %}
         <tr data-engine="{{ loop.index0 }}">
@@ -73,22 +79,24 @@
     <dl class="kv">
       <dt>URL</dt><dd class="mono">{{ scan.url | defang }}</dd>
       <dt>Host</dt><dd class="mono">{{ scan.host | defang }}</dd>
+      <dt>URL id</dt><dd class="mono">{{ scan.url_id }}</dd>
       <dt>Verdict</dt><dd><span class="badge {{ 'malicious' if malicious else 'harmless' }}">{{ scan.verdict }}</span></dd>
       <dt>Categories</dt><dd>{% for c in categories %}<span class="badge suspicious" style="margin:2px">{{ c }}</span>{% else %}<span class="muted">—</span>{% endfor %}</dd>
-      <dt>Last check</dt><dd>{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
+      <dt>Feed entries</dt><dd>{{ feed_count }}</dd>
+      <dt>Last analysis</dt><dd>{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
     </dl>
   </section>
 
   {% if relations %}
   <section id="tab-relations" class="tab-panel">
-    <p class="muted">Analyzed files containing this URL/domain:</p>
+    <p class="muted">Other analyzed files sharing indicators with this one:</p>
     <table>
-      <thead><tr><th>File</th><th>Shared indicator</th><th>Detection</th></tr></thead>
+      <thead><tr><th>File</th><th>Shared indicators</th><th>Detection</th></tr></thead>
       <tbody>
         {% for other, reasons in relations %}
         <tr>
           <td><a href="/ui/file/{{ other.sha256 }}">{{ other.file_name }}</a></td>
-          <td class="mono">{{ reasons | join(" · ") }}</td>
+          <td class="mono">{{ reasons | join(" · ") | defang }}</td>
           <td><span class="badge {{ 'malicious' if other.verdict == 'infected' else 'harmless' }}">{{ other.verdict }}</span></td>
         </tr>
         {% endfor %}

@@ -1237,6 +1237,21 @@ def url_lookup(request: Request, url: str = "", db: Session = Depends(get_db)) -
     return RedirectResponse(f"/ui/url/{scan.url_id}", status_code=303)
 
 
+@app.post("/ui/url/{url_id}/rescan")
+def url_rescan(url_id: str, db: Session = Depends(get_db)) -> RedirectResponse:
+    """Re-run the domain-feed check for a cached URL scan (mirrors file Reanalyze)."""
+    scan = db.get(UrlScan, url_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="not found")
+    feed = get_domain_feed()
+    if feed is None:
+        raise ScannerUnavailableError(
+            "domain feed unavailable (set DOMAIN_FEED_DIR / DOMAIN_FEED_SOCKET)"
+        )
+    scan_url(db, scan.url, feed)
+    return RedirectResponse(f"/ui/url/{url_id}", status_code=303)
+
+
 @app.get("/ui/url/{url_id}", response_class=HTMLResponse)
 def url_report(request: Request, url_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
     _rate_limit(request, settings.rate_limit_browse, "browse")
