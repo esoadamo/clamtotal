@@ -165,6 +165,7 @@ Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon comp
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
 | `UPLOADS_TTL` | `-1` | how long uploaded samples are stored locally, in minutes: `-1` = forever, `0` = delete right after upload+scan, `N` = keep N minutes (pruned every minute) |
+| `SCANS_TTL` | `-1` | how long scan results (report rows in the SQLite database) are kept, in minutes, same semantics as `UPLOADS_TTL`: `-1` = forever (default), `0` = delete right after the scan finishes, `N` = keep N minutes (pruned every minute; the stored sample is deleted together with its scan result) |
 | `SCAN_POLL_INTERVAL_MS` | `3000` | how often the pending report page polls for scan progress |
 | `RATE_LIMIT_UPLOAD` | `0` | optional per-IP rate limit on uploads (`POST /file/upload`, `POST /api/v2/files`): max requests per window, `0` = disabled |
 | `RATE_LIMIT_BROWSE` | `0` | optional per-IP rate limit on browsing result pages (`/ui/`, `/ui/search`, `/ui/file/{hash}`): max requests per window, `0` = disabled |

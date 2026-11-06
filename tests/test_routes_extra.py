@@ -621,6 +621,95 @@ def test_upload_ttl_zero_deletes_sample_after_scan(client, monkeypatch, tmp_path
     assert client.get(f"/ui/file/{sha}/download").status_code == 404
 
 
+def test_prune_scans_ttl(client, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.db import SessionLocal
+    from app.main import _prune_scans
+    from app.models import Scan
+
+    assert settings.scans_ttl == -1  # default: scans are stored infinitely
+
+    def add_scan(sha, status, scanned_at):
+        with SessionLocal() as db:
+            db.add(
+                Scan(
+                    sha256=sha,
+                    md5="0" * 32,
+                    sha1="0" * 40,
+                    file_name="s.bin",
+                    size=1,
+                    file_type="data",
+                    magic_hex="",
+                    verdict="clean" if status == "done" else "pending",
+                    status=status,
+                    engine="x",
+                    urls=[],
+                    scanned_at=scanned_at,
+                )
+            )
+            db.commit()
+
+    def exists(sha):
+        with SessionLocal() as db:
+            return db.get(Scan, sha) is not None
+
+    now = datetime.now(UTC)
+    fresh_done = "e1" * 32
+    old_done = "e2" * 32
+    old_pending = "e3" * 32
+    add_scan(fresh_done, "done", now)
+    add_scan(old_done, "done", now - timedelta(minutes=10))
+    add_scan(old_pending, "pending", now - timedelta(minutes=10))
+    # a stored sample for the old done row — pruned together with the record
+    sample = Path(settings.upload_dir) / old_done
+    sample.write_bytes(b"orphan sample")
+
+    monkeypatch.setattr(settings, "scans_ttl", -1)
+    _prune_scans()
+    assert exists(fresh_done) and exists(old_done) and exists(old_pending)
+
+    monkeypatch.setattr(settings, "scans_ttl", 1)  # keep 1 minute
+    _prune_scans()
+    assert exists(fresh_done)
+    assert not exists(old_done) and not sample.exists()  # record + sample pruned
+    assert exists(old_pending)  # pending scans are never pruned
+
+    monkeypatch.setattr(settings, "scans_ttl", 0)  # delete immediately
+    _prune_scans()
+    assert not exists(fresh_done)
+    assert exists(old_pending)
+
+
+def test_upload_scans_ttl_zero_deletes_record_after_scan(client, monkeypatch):
+    monkeypatch.setattr(settings, "scans_ttl", 0)
+    content = b"scans ttl zero sample"
+    client.post("/file/upload", files={"file": ("sttl0.bin", content)})
+    sha = hashlib.sha256(content).hexdigest()
+    # the scan ran (background task), then the record was deleted: no report, no API row
+    assert client.get(f"/api/v2/files/{sha}").status_code == 404
+    assert client.get(f"/ui/file/{sha}").status_code == 404
+    assert not (Path(settings.upload_dir) / sha).exists()  # sample deleted with the record
+
+
+def test_privacy_policy_scans_ttl_sentence_reflects_setting(client, monkeypatch):
+    from app.config import settings as s
+
+    monkeypatch.setattr(s, "scans_ttl", -1)
+    page = client.get("/ui/privacy").text
+    assert "All scan results are kept indefinitely." in page  # default: stored infinitely
+    monkeypatch.setattr(s, "scans_ttl", 0)
+    page = client.get("/ui/privacy").text
+    assert "All scan results are deleted right after the scan finishes." in page
+    monkeypatch.setattr(s, "scans_ttl", 5)
+    page = client.get("/ui/privacy").text
+    assert (
+        "All scan results are deleted after 5 minutes. A background job prunes them every minute."
+        in page
+    )
+    assert "deleted with it" in page  # sample goes away together with its scan result
+
+
 def test_search_by_domain_ip_url_and_partial_hash(client):
     import time
 

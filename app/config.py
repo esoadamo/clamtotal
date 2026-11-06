@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # how long uploaded samples are kept locally, in minutes:
     # -1 = indefinitely, 0 = delete right after upload+scan, N = keep N minutes
     uploads_ttl: int = -1
+    # how long scan results (report rows in the database) are kept, in minutes —
+    # same semantics as uploads_ttl: -1 = indefinitely (default), 0 = delete right
+    # after the scan finishes, N = keep N minutes. The stored sample file is
+    # deleted together with its scan result.
+    scans_ttl: int = -1
     # how often the report page polls for scan progress while pending
     scan_poll_interval_ms: int = 3000
 

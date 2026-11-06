@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +161,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     def loop() -> None:
         while True:
             _prune_uploads()
+            _prune_scans()
             time.sleep(60)
 
     threading.Thread(target=loop, daemon=True).start()
@@ -269,6 +270,27 @@ def _prune_uploads() -> None:
     for f in upload_dir.iterdir():
         if f.is_file() and (ttl == 0 or now - f.stat().st_mtime > ttl * 60):
             f.unlink(missing_ok=True)
+
+
+def _prune_scans() -> None:
+    """Delete finished scan records past their TTL (scans_ttl=-1 keeps them forever,
+    0 deletes them on the next pass, N = keep N minutes) and the stored sample with
+    them — a sample without its report row is dead weight. Pending scans (a scan
+    still running) are never pruned."""
+    ttl = settings.scans_ttl
+    if ttl < 0:
+        return
+    now = datetime.now(UTC)
+    with SessionLocal() as db:
+        done = db.execute(select(Scan).where(Scan.status == "done")).scalars().all()
+        for row in done:
+            scanned_at = row.scanned_at
+            if scanned_at.tzinfo is None:  # SQLite hands back naive datetimes
+                scanned_at = scanned_at.replace(tzinfo=UTC)
+            if ttl == 0 or (now - scanned_at) > timedelta(minutes=ttl):
+                (Path(settings.upload_dir) / row.sha256).unlink(missing_ok=True)
+                db.delete(row)
+        db.commit()
 
 
 _rate_buckets: dict[str, tuple[float, int]] = {}
@@ -547,6 +569,13 @@ def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
     )
     if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
         (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
+    if settings.scans_ttl == 0:  # delete the scan record (and sample) right after the scan
+        (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
+        with SessionLocal() as db:
+            row = db.get(Scan, scan.sha256)
+            if row is not None:
+                db.delete(row)
+                db.commit()
 
 
 def _run_scan_file(path: Path, file_name: str) -> None:
@@ -976,6 +1005,25 @@ def rescan(
     return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
 
 
+def _ttl_sentence(ttl: int, noun: str, zero_note: str) -> str:
+    """Human-readable retention sentence for a TTL setting (minutes): -1 = forever,
+    0 = deleted immediately, N = deleted after N minutes by the prune loop."""
+    if ttl < 0:
+        return f"All {noun} are kept indefinitely."
+    if ttl == 0:
+        return f"All {noun} are deleted {zero_note}."
+    if ttl >= 1440 and ttl % 1440 == 0:
+        n, unit = ttl // 1440, "day"
+    elif ttl >= 60 and ttl % 60 == 0:
+        n, unit = ttl // 60, "hour"
+    else:
+        n, unit = ttl, "minute"
+    return (
+        f"All {noun} are deleted after {n} {unit}{'s' if n != 1 else ''}. "
+        "A background job prunes them every minute."
+    )
+
+
 @app.get("/ui/terms", response_class=HTMLResponse)
 def terms(request: Request) -> HTMLResponse:
     _rate_limit(request, settings.rate_limit_browse, "browse")
@@ -984,23 +1032,18 @@ def terms(request: Request) -> HTMLResponse:
 
 @app.get("/ui/privacy", response_class=HTMLResponse)
 def privacy(request: Request) -> HTMLResponse:
-    ttl = settings.uploads_ttl
-    if ttl < 0:
-        ttl_sentence = "All uploaded files are kept indefinitely."
-    elif ttl == 0:
-        ttl_sentence = "All uploaded files are deleted right after upload."
-    else:
-        if ttl >= 1440 and ttl % 1440 == 0:
-            n, unit = ttl // 1440, "day"
-        elif ttl >= 60 and ttl % 60 == 0:
-            n, unit = ttl // 60, "hour"
-        else:
-            n, unit = ttl, "minute"
-        ttl_sentence = (
-            f"All uploaded files are deleted after {n} {unit}{'s' if n != 1 else ''}. "
-            "A background job prunes them every minute."
-        )
-    return templates.TemplateResponse(request, "privacy.html", {"ttl_sentence": ttl_sentence})
+    return templates.TemplateResponse(
+        request,
+        "privacy.html",
+        {
+            "ttl_sentence": _ttl_sentence(
+                settings.uploads_ttl, "uploaded files", "right after upload"
+            ),
+            "scans_sentence": _ttl_sentence(
+                settings.scans_ttl, "scan results", "right after the scan finishes"
+            ),
+        },
+    )
 
 
 @app.get("/ui/search", response_class=HTMLResponse)
