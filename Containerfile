@@ -23,7 +23,8 @@ ENV UV_COMPILE_BYTECODE=1 \
     UPLOAD_DIR=/data/uploads \
     YARA_RULES_DIR=/rules \
     YARA_SOCKET=/tmp/yara.sock \
-    URL_BLOCKLIST_DIR=/data/blocklists \
+    DOMAIN_FEED_DIR=/data/domain-feed \
+    DOMAIN_FEED_SOCKET=/tmp/domain-feed.sock \
     CLAM_AUTOUPDATE=true
 
 RUN apt-get update \
@@ -43,20 +44,20 @@ COPY scripts/update-signatures.sh /usr/local/bin/
 # Third-party YARA rule sets for the local YARA engine (license-permitted sources only).
 COPY scripts/update-yara-rules.sh /usr/local/bin/
 COPY container/yara-rules-sources.conf /etc/yara-rules-sources.conf
-# URL/domain blocklists for URL scanning (categorized public lists; URLhaus needs a key).
-COPY scripts/update-url-blocklists.sh /usr/local/bin/
-COPY container/url-blocklist-sources.conf /etc/url-blocklist-sources.conf
+# Domain feed for URL/domain scanning (categorized public lists; URLhaus needs a key).
+COPY scripts/update-domain-feed.sh /usr/local/bin/
+COPY container/domain-feed-sources.conf /etc/domain-feed-sources.conf
 # fangfrisch is installed in the uv venv, not on PATH — call it via the venv binary.
 # Signature semantics: by default NOTHING is downloaded at build time (signatures are
 # fetched on first container launch, see container-entrypoint.sh). AIRGAPPED=true bakes
 # signatures into the image at build time instead.
 RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-yara-rules.sh \
-         /usr/local/bin/update-url-blocklists.sh \
+         /usr/local/bin/update-domain-feed.sh \
     && mkdir -p /var/lib/fangfrisch \
     && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
     && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
          YARA_RULES_DIR=/rules update-yara-rules.sh || true; \
-         URL_BLOCKLIST_DIR=/data/blocklists update-url-blocklists.sh || true; \
+         DOMAIN_FEED_DIR=/data/domain-feed update-domain-feed.sh || true; \
          else echo "default build: signatures are downloaded on first container launch"; fi
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).

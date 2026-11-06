@@ -23,15 +23,15 @@ services:
       # the commented yara-forge opt-in entries); optional
       # - ./yara-rules-sources.conf:/etc/yara-rules-sources.conf:ro
       # (or point YARA_RULES_SOURCES at a different path via environment below)
-      # mount your own URL blocklist sources list over the baked-in one; optional
-      # - ./url-blocklist-sources.conf:/etc/url-blocklist-sources.conf:ro
-      # (or point URL_BLOCKLIST_SOURCES at a different path via environment below)
+      # mount your own domain feed sources list over the baked-in one; optional
+      # - ./domain-feed-sources.conf:/etc/domain-feed-sources.conf:ro
+      # (or point DOMAIN_FEED_SOURCES at a different path via environment below)
     environment:
       # set to "false" for fully airgapped operation (bake signatures into the image)
       CLAM_AUTOUPDATE: "true"
-      # free URLhaus (abuse.ch) API key to enable the commented urlhaus blocklist
+      # free URLhaus (abuse.ch) API key to enable the commented urlhaus feed
       # source (https://urlhaus.abuse.ch/api/); the updater substitutes it into
-      # the <URLHAUS_AUTH_KEY> placeholder in /etc/url-blocklist-sources.conf
+      # the <URLHAUS_AUTH_KEY> placeholder in /etc/domain-feed-sources.conf
       # URLHAUS_AUTH_KEY: ""
     # clamd holds the signature DB in RAM and the yara daemon compiles the rule set
     # once — with all default third-party YARA sources that needs several GB total.

@@ -52,11 +52,16 @@ class Settings(BaseSettings):
 
     # local YARA rules directory (public rules only); empty disables the YARA engine
     yara_rules_dir: str = ""
-    # directory with downloaded URL/domain blocklists (<name>.txt files plus a
-    # .blocklists-stamp, written by scripts/update-url-blocklists.sh); the app imports
-    # them into the DB and hot-reloads when the stamp changes. Empty disables
-    # URL/domain scanning. The container sets it to /data/blocklists.
-    url_blocklist_dir: str = ""
+    # domain feed: directory with downloaded feed files (<name>.txt plus a
+    # .feed-stamp, written by scripts/update-domain-feed.sh); the feed is imported into
+    # its OWN database (feed.db in this dir, separate from the app DB) and hot-reloaded
+    # when the stamp changes. Empty (and no socket) disables URL/domain scanning.
+    # The container sets it to /data/domain-feed.
+    domain_feed_dir: str = ""
+    # Unix socket of the domain feed daemon (container: /tmp/domain-feed.sock): when
+    # set, workers query the daemon over the socket instead of importing the feed
+    # in-process. Empty = in-process feed from DOMAIN_FEED_DIR (local development).
+    domain_feed_socket: str = ""
     # Unix socket of the YARA scan daemon (container sets /tmp/yara.sock): when set,
     # workers query the daemon instead of compiling the rule set into their own RAM.
     # Empty = in-process YaraScanner from YARA_RULES_DIR (local development).

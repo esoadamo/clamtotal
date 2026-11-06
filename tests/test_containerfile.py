@@ -229,21 +229,22 @@ def test_yara_forge_is_commented_optin_and_sources_config_is_mountable():
     assert "YARA_RULES_SOURCES" in (ROOT / "README.md").read_text()
 
 
-def test_url_blocklist_wiring():
+def test_domain_feed_wiring():
     cf = (ROOT / "Containerfile").read_text()
     ep = (ROOT / "container-entrypoint.sh").read_text()
-    script = (ROOT / "scripts" / "update-url-blocklists.sh").read_text()
-    conf = (ROOT / "container" / "url-blocklist-sources.conf").read_text()
-    assert (ROOT / "scripts" / "update-url-blocklists.sh").exists()
-    assert "COPY scripts/update-url-blocklists.sh" in cf
-    assert "COPY container/url-blocklist-sources.conf" in cf
-    assert "URL_BLOCKLIST_DIR=/data/blocklists" in cf
-    assert "update-url-blocklists.sh" in cf.split("chmod +x")[1].split("&&")[0]
+    script = (ROOT / "scripts" / "update-domain-feed.sh").read_text()
+    conf = (ROOT / "container" / "domain-feed-sources.conf").read_text()
+    assert (ROOT / "scripts" / "update-domain-feed.sh").exists()
+    assert "COPY scripts/update-domain-feed.sh" in cf
+    assert "COPY container/domain-feed-sources.conf" in cf
+    assert "DOMAIN_FEED_DIR=/data/domain-feed" in cf
+    assert "DOMAIN_FEED_SOCKET=/tmp/domain-feed.sock" in cf
+    assert "update-domain-feed.sh" in cf.split("chmod +x")[1].split("&&")[0]
     # entrypoint: bootstrap + periodic loop, gated on CLAM_AUTOUPDATE like the ClamAV updates
-    assert ep.count("update-url-blocklists.sh") >= 2
+    assert ep.count("update-domain-feed.sh") >= 2
     assert "CLAM_AUTOUPDATE" in ep
-    # the update script touches the stamp file so the app hot-reloads the lists
-    assert ".blocklists-stamp" in script
+    # the update script touches the stamp file so the feed daemon hot-reloads the lists
+    assert ".feed-stamp" in script
     # URLhaus ships commented out: it needs a user-provided API key, substituted by
     # the script from URLHAUS_AUTH_KEY (or baked into a mounted sources conf)
     assert (
@@ -257,12 +258,25 @@ def test_url_blocklist_wiring():
         in conf
     )
     assert "|gambling|" in conf
-    # airgapped builds bake the blocklists at build time too
-    assert re.search(r'AIRGAPPED" = "true" \]; then .*update-url-blocklists\.sh', cf, re.S)
+    # airgapped builds bake the feed at build time too
+    assert re.search(r'AIRGAPPED" = "true" \]; then .*update-domain-feed\.sh', cf, re.S)
     # compose documents the sources-conf mount and the URLHAUS_AUTH_KEY env var
     compose = (ROOT / "compose.yaml").read_text()
-    assert "./url-blocklist-sources.conf:/etc/url-blocklist-sources.conf:ro" in compose
+    assert "./domain-feed-sources.conf:/etc/domain-feed-sources.conf:ro" in compose
     assert "URLHAUS_AUTH_KEY" in compose
+
+
+def test_domain_feed_daemon_wiring():
+    # the feed runs as its own daemon (like the yara daemon) over a Unix socket, backed
+    # by its OWN database (feed.db in the feed dir, not the app DB)
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    assert "app.feed_daemon" in ep and "DOMAIN_FEED_SOCKET" in ep
+    assert '--db "$DOMAIN_FEED_DIR/feed.db"' in ep
+    # the web UI starts only after the daemon answers PING (same pattern as clamd/yara),
+    # but a dead feed daemon is non-fatal (file scanning still works, URL checks 503)
+    assert "domain feed daemon did not answer PING" in ep
+    assert ep.index("app.feed_daemon") < ep.index("exec /app/.venv/bin/uvicorn")
+    assert "feed.db" in (ROOT / "app" / "domain_feed.py").read_text()  # separate DB file
 
 
 def test_compose_persists_yara_rules():

@@ -252,8 +252,8 @@ def test_healthz(client):
     assert clam["rules"] is None and clam["rules_updated_at"] is None  # no CLAMAV_DB_DIR
     assert yara_eng["type"] == "yara" and yara_eng["enabled"] and not yara_eng["ready"]
     assert yara_eng["version"] and yara_eng["rules"] is None
-    # the URL blocklist feed is listed as an engine entry too (a feed, not a scan engine)
-    assert bl_eng["type"] == "blocklists" and bl_eng["enabled"]
+    # the domain feed is listed as an engine entry too (a feed, not a scan engine)
+    assert bl_eng["type"] == "domain-feed" and bl_eng["enabled"]
     assert bl_eng["ready"] == (bl_eng["rules"] > 0)  # order-independent vs other tests
 
 

@@ -15,27 +15,27 @@
 <meta name="twitter:title" content="{{ og_title }}">
 <meta name="twitter:description" content="Analyze suspicious files and URLs — VirusTotal-style scan reports.">
 <meta name="twitter:image" content="/static/og-card.svg">
-<meta name="theme-color" content="#1a1a2e">
+<meta name="theme-color" content="#0f766e">
 {% if plausible_script_url %}<script defer src="{{ plausible_script_url }}"></script>{% endif %}
 <style>
   :root {
-    --brand: #4a8fe2;        /* VirusTotal-style blue */
-    --brand-dark: #3573c4;
-    --brand-soft: #1d2f4d;
-    --accent: #4a8fe2;
-    --accent-soft: #1d2f4d;
-    --red: #e5484d;
-    --red-soft: #45202a;
-    --orange: #f76b15;
-    --orange-soft: #46301f;
-    --green: #46a758;
-    --green-soft: #1d3a26;
-    --bg: #1a1a2e;           /* dark page, like the VirusTotal GUI */
-    --card: #23233c;
-    --border: #35355a;
-    --text: #e8e8f0;
-    --muted: #8a8aa3;
-    --field: #2b2b49;
+    --brand: #0f766e;        /* deep teal */
+    --brand-dark: #115e59;
+    --brand-soft: #ccfbf1;
+    --accent: #d97706;       /* amber */
+    --accent-soft: #fef3c7;
+    --red: #dc2626;
+    --red-soft: #fee2e2;
+    --orange: #ea580c;
+    --orange-soft: #ffedd5;
+    --green: #16a34a;
+    --green-soft: #dcfce7;
+    --bg: #f7f5f0;           /* warm paper */
+    --card: #ffffff;
+    --border: #e7e2d9;
+    --text: #292524;         /* warm stone */
+    --muted: #78716c;
+    --field: #efe9df;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -58,21 +58,21 @@
     align-items: center;
     gap: 24px;
     padding: 0 24px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 1px 4px rgba(41, 37, 36, 0.08);
     position: sticky;
     top: 0;
     z-index: 10;
   }
-  .logo { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 700; color: var(--brand); letter-spacing: -0.3px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
   .logo:hover { text-decoration: none; }
-  .logo .logo-word em { font-style: normal; color: var(--text); }
+  .logo .logo-word em { font-style: normal; color: var(--brand); }
   .logo svg { display: block; }
   .appbar-search { flex: 1; max-width: 720px; margin: 0 auto; display: flex; }
   .appbar-search input {
     flex: 1; height: 40px; border: 1px solid var(--border); border-right: none; border-radius: 20px 0 0 20px;
     background: var(--field); padding: 0 16px; font-size: 14px; outline: none; font-family: inherit; color: var(--text);
   }
-  .appbar-search input:focus { background: #32325a; border-color: var(--brand); }
+  .appbar-search input:focus { background: #fff; border-color: var(--brand); }
   .appbar-search button {
     height: 40px; padding: 0 22px; border: none; border-radius: 0 20px 20px 0;
     background: var(--brand); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -82,7 +82,7 @@
   .container { max-width: 1032px; margin: 28px auto; padding: 0 16px; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 1px 3px rgba(41, 37, 36, 0.06);
     padding: 24px; margin-bottom: 24px;
   }
   .card h2, .section-title {
@@ -103,7 +103,7 @@
     background: var(--brand); color: #fff; font-size: 14px; font-weight: 600; font-family: inherit;
   }
   .btn:hover { background: var(--brand-dark); text-decoration: none; }
-  .btn.outline { background: transparent; color: var(--brand); border: 1.5px solid var(--brand); }
+  .btn.outline { background: #fff; color: var(--brand); border: 1.5px solid var(--brand); }
   .btn.outline:hover { background: var(--brand-soft); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -115,7 +115,7 @@
   .flag { color: var(--red); font-weight: 600; }
   .ok { color: var(--green); }
 
-  /* tabs (report page + home FILE/URL/SEARCH widget) */
+  /* tabs */
   .tabs { display: flex; gap: 28px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
   .tab {
     background: none; border: none; padding: 12px 2px; cursor: pointer; font-family: inherit;
@@ -126,23 +126,6 @@
   .tab.active { color: var(--brand); border-bottom-color: var(--accent); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
-
-  /* VirusTotal-style home: centered logo, tagline, FILE/URL/SEARCH widget */
-  .vt-home { max-width: 720px; margin: 0 auto; text-align: center; }
-  .vt-logo {
-    display: flex; align-items: center; justify-content: center; gap: 12px;
-    font-size: 40px; font-weight: 700; color: var(--brand); letter-spacing: -1px; margin-top: 24px;
-  }
-  .vt-logo em { font-style: normal; color: var(--text); }
-  .vt-tagline { color: var(--muted); font-size: 15px; max-width: 560px; margin: 10px auto 28px; }
-  .vt-widget { text-align: left; }
-  .vt-tabs { gap: 0; }
-  .vt-tabs .tab { flex: 1; text-align: center; }
-  .vt-notice { color: var(--muted); font-size: 12.5px; margin: 0 4px 24px; }
-  .vt-api-bar {
-    background: #16213e; border: 1px solid var(--border); border-radius: 8px;
-    color: var(--muted); font-size: 13px; padding: 12px 16px; margin-bottom: 24px;
-  }
 
   /* detection ring widget */
   .det-widget { display: flex; align-items: center; gap: 24px; }
@@ -158,7 +141,7 @@
   /* upload dropzone */
   .dropzone {
     border: 2px dashed var(--border); border-radius: 12px; padding: 56px 24px;
-    text-align: center; color: var(--muted); background: #1e1e36;
+    text-align: center; color: var(--muted); background: #fdfcf9;
   }
   .dropzone .dz-title { font-size: 18px; color: var(--text); margin: 12px 0 4px; font-weight: 600; }
   .dropzone .dz-or { margin: 16px 0; }
@@ -193,18 +176,40 @@
 
   /* modal dialog */
   .modal-overlay {
-    position: fixed; inset: 0; background: rgba(10, 10, 20, 0.7);
+    position: fixed; inset: 0; background: rgba(41, 37, 36, 0.45);
     display: none; align-items: center; justify-content: center; z-index: 100;
   }
   .modal-overlay.open { display: flex; }
   .modal {
-    background: var(--card); border-radius: 12px; border-top: 4px solid var(--brand);
-    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.6);
+    background: #fff; border-radius: 12px; border-top: 4px solid var(--brand);
+    box-shadow: 0 10px 36px rgba(41, 37, 36, 0.3);
     width: 480px; max-width: 92vw; padding: 24px;
   }
-  .modal h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; color: var(--text); }
+  .modal h3 { margin: 0 0 8px; font-size: 18px; font-weight: 700; }
   .modal .modal-body { color: var(--muted); font-size: 13.5px; word-break: break-all; }
   .modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+  /* home page: centered logo, tagline, FILE/URL/SEARCH widget, notice, API bar */
+  .home { max-width: 720px; margin: 0 auto; text-align: center; }
+  .home-logo {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    font-size: 40px; font-weight: 700; color: var(--brand); letter-spacing: -1px; margin-top: 24px;
+  }
+  .home-logo em { font-style: normal; color: var(--text); }
+  .home-tagline { color: var(--muted); font-size: 15px; max-width: 560px; margin: 10px auto 28px; }
+  .home-widget { text-align: left; }
+  .home-tabs { gap: 0; }
+  .home-tabs .tab { flex: 1; text-align: center; }
+  .home-notice { color: var(--muted); font-size: 12.5px; margin: 0 4px 24px; }
+  .home-api-bar {
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--muted); font-size: 13px; padding: 12px 16px; margin-bottom: 24px;
+  }
+  .home-input {
+    flex: 1; height: 40px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--field); color: var(--text); padding: 0 12px; font-family: inherit; font-size: 14px;
+  }
+  .home-input:focus { background: #fff; border-color: var(--brand); outline: none; }
 
   /* mobile */
   @media (max-width: 640px) {
@@ -229,8 +234,8 @@
 <header class="appbar">
   <a class="logo" href="/ui/" aria-label="ClamTotal home">
     <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#4a8fe2"/>
-      <path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#0f766e"/>
+      <path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </svg>
     <span class="logo-word">Clam<em>Total</em></span>
   </a>

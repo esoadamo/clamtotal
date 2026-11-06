@@ -6,7 +6,8 @@ from pathlib import Path
 _tmp = Path(tempfile.mkdtemp(prefix="clamtotal-test-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
 os.environ["UPLOAD_DIR"] = str(_tmp / "uploads")
-os.environ["URL_BLOCKLIST_DIR"] = str(_tmp / "blocklists")
+os.environ["DOMAIN_FEED_DIR"] = str(_tmp / "domain-feed")
+Path(_tmp / "domain-feed").mkdir(exist_ok=True)
 os.environ["CLAM_MODE"] = "cli"
 
 import pytest  # noqa: E402

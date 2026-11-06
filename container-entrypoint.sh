@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-mkdir -p /data/uploads /rules "${URL_BLOCKLIST_DIR:-/data/blocklists}"
+mkdir -p /data/uploads /rules "${DOMAIN_FEED_DIR:-/data/domain-feed}"
 
 # Keep clamd's INSTREAM size cap in sync with the app's STREAM_SCAN_MAX_SIZE, which
 # defaults to MAX_UPLOAD_SIZE (512M): every accepted upload then goes via INSTREAM and
@@ -52,14 +52,13 @@ if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   fi
 fi
 
-# URL/domain blocklists for URL scanning (hagezi, StevenBlack, URLhaus with key, ...).
-# Non-fatal: without them file scanning still works and URL checks report "harmless"
-# with a "no blocklists loaded" note on the report page and /healthz.
+# Domain feed for URL/domain scanning (hagezi, StevenBlack, URLhaus with key, ...).
+# Non-fatal: without it file scanning still works and URL checks return 503.
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
-  blocklist_dir="${URL_BLOCKLIST_DIR:-/data/blocklists}"
-  if ! ls "$blocklist_dir"/*.txt >/dev/null 2>&1; then
-    echo "[bootstrap] no URL blocklists in $blocklist_dir - downloading..."
-    update-url-blocklists.sh || echo "[bootstrap] url blocklist download failed (offline?) - URL checks will report harmless until lists exist"
+  feed_dir="${DOMAIN_FEED_DIR:-/data/domain-feed}"
+  if ! ls "$feed_dir"/*.txt >/dev/null 2>&1; then
+    echo "[bootstrap] no domain feed in $feed_dir - downloading..."
+    update-domain-feed.sh || echo "[bootstrap] domain feed download failed (offline?) - URL checks will 503 until a feed exists"
   fi
 fi
 
@@ -72,7 +71,7 @@ if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
       sleep "$interval"
       update-signatures.sh || echo "[autoupdate] update failed; will retry next cycle"
       update-yara-rules.sh || echo "[autoupdate] yara rules update failed; will retry next cycle"
-      update-url-blocklists.sh || echo "[autoupdate] url blocklists update failed; will retry next cycle"
+      update-domain-feed.sh || echo "[autoupdate] domain feed update failed; will retry next cycle"
     done
   ) &
 fi
@@ -134,6 +133,36 @@ sys.exit(f"yara daemon did not answer PING on {sock_path}")
 EOF
   then
     echo "[bootstrap] WARNING: yara daemon did not answer PING on ${YARA_SOCKET:-/tmp/yara.sock} — continuing WITHOUT the YARA engine (/healthz will show it not ready). It was likely OOM-killed while compiling the rule set: raise the container memory limit (compose mem_limit, e.g. 8g) or trim /etc/yara-rules-sources.conf." >&2
+  fi
+fi
+
+# Domain feed daemon: imports the downloaded feed lists into their OWN database
+# ($DOMAIN_FEED_DIR/feed.db, separate from the app DB) ONCE in a single process and
+# serves lookups on $DOMAIN_FEED_SOCKET; uvicorn workers query it over the socket
+# instead of each importing the lists. Started before uvicorn; non-fatal like the
+# yara daemon (without it URL checks return 503, file scanning still works).
+if [ -n "${DOMAIN_FEED_DIR:-}" ]; then
+  feed_socket="${DOMAIN_FEED_SOCKET:-/tmp/domain-feed.sock}"
+  /app/.venv/bin/python -m app.feed_daemon \
+    --feed-dir "$DOMAIN_FEED_DIR" --db "$DOMAIN_FEED_DIR/feed.db" --socket "$feed_socket" &
+  if ! python - <<EOF
+import os, socket, sys, time
+
+sock_path = os.environ.get("DOMAIN_FEED_SOCKET", "/tmp/domain-feed.sock")
+for _ in range(60):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(sock_path)
+            s.sendall(b"zPING\0")
+            if b"PONG" in s.recv(64):
+                sys.exit(0)
+    except OSError:
+        pass
+    time.sleep(1)
+sys.exit(f"domain feed daemon did not answer PING on {sock_path}")
+EOF
+  then
+    echo "[bootstrap] WARNING: domain feed daemon did not answer PING on $feed_socket - continuing WITHOUT the domain feed (URL checks will 503; /healthz shows the feed engine as not ready)." >&2
   fi
 fi
 

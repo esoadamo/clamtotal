@@ -48,9 +48,9 @@ from app.analysis import (
     shannon_entropy_file,
     sniff_file_type,
 )
-from app.blocklists import blocklist_stats, ensure_blocklists_loaded, scan_url
 from app.config import settings
 from app.db import SessionLocal, get_db
+from app.domain_feed import get_domain_feed, scan_url
 from app.models import Scan, UrlScan
 from app.scanner import (
     Scanner,
@@ -149,7 +149,8 @@ def _probe_scanner_at_startup() -> None:
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     _probe_scanner_at_startup()
     _recover_pending_scans_once()
-    ensure_blocklists_loaded()  # import downloaded URL blocklists (background if stale)
+    if not settings.domain_feed_socket:
+        get_domain_feed()  # in-process feed (dev): import downloaded files once at startup
     rss = rss_mb()
     logger.info(
         "worker up: pid=%d rss=%s",
@@ -237,8 +238,8 @@ _HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
 
 _FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-    '<path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#4a8fe2"/>'
-    '<path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#1a1a2e" stroke-width="3" fill="none" '
+    '<path d="M16 2 4 7v8c0 7.5 5.1 13 12 15 6.9-2 12-7.5 12-15V7L16 2Z" fill="#0f766e"/>'
+    '<path d="m10.5 16.5 3.8 3.8 7.2-7.6" stroke="#fbbf24" stroke-width="3" fill="none" '
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 
@@ -1010,9 +1011,10 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
         scan = _lookup(db, q)
         if scan is not None:
             return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
-    # a domain/URL query also gets a live blocklist verdict card above the file results
+    # a domain/URL query also gets a live domain-feed verdict card above the file results
     # (require_tld: only real IANA TLDs, so file names like "notes.txt" stay file searches)
-    url_scan = scan_url(db, q, require_tld=True) if q and settings.url_blocklist_dir else None
+    feed = get_domain_feed()
+    url_scan = scan_url(db, q, feed, require_tld=True) if q and feed is not None else None
     results = []
     if q:
         like = f"%{q}%"
@@ -1115,12 +1117,14 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
 
 
 def _url_scan_or_none(db: Session, value: str, require_tld: bool = False) -> UrlScan | None:
-    if not settings.url_blocklist_dir:
+    feed = get_domain_feed()
+    if feed is None:
         raise ScannerUnavailableError(
-            "URL scanning disabled (URL_BLOCKLIST_DIR not set — the container sets it to "
-            "/data/blocklists)"
+            "URL scanning disabled or domain feed unavailable (set DOMAIN_FEED_DIR / "
+            "DOMAIN_FEED_SOCKET — the container sets them to /data/domain-feed and "
+            "/tmp/domain-feed.sock)"
         )
-    return scan_url(db, value, require_tld=require_tld)
+    return scan_url(db, value, feed, require_tld=require_tld)
 
 
 @app.post(
@@ -1135,7 +1139,7 @@ def _url_scan_or_none(db: Session, value: str, require_tld: bool = False) -> Url
 def api_scan_url(
     request: Request, url: str = Form(...), db: Session = Depends(get_db)
 ) -> JSONResponse:
-    """VT-compatible URL check: the blocklist lookup is local and instant, so the
+    """VT-compatible URL check: the domain-feed lookup is local and instant, so the
     verdict comes back synchronously (no 202/pending dance like file scans)."""
     _rate_limit(request, settings.rate_limit_upload, "upload")
     scan = _url_scan_or_none(db, url)
@@ -1198,11 +1202,12 @@ def url_report(request: Request, url_id: str, db: Session = Depends(get_db)) -> 
         return templates.TemplateResponse(
             request, "not_found.html", {"hash_value": url_id}, status_code=404
         )
-    blocklist_count, _ = blocklist_stats(db)
+    feed = get_domain_feed()
+    feed_count = feed.stats()[0] if feed is not None else 0
     return templates.TemplateResponse(
         request,
         "url_report.html",
-        {"scan": scan, "blocklist_count": blocklist_count},
+        {"scan": scan, "feed_count": feed_count},
     )
 
 
@@ -1277,17 +1282,18 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
                 rules_updated_at=None,
             )
         )
-    # the URL blocklist feed shows as an engine entry too; it is a data feed, not a
-    # scan engine, so it never affects the ok/degraded status (uploads would still 503)
-    if settings.url_blocklist_dir:
-        count, updated = blocklist_stats(db)
+    # the domain feed shows as an engine entry too; it is a data feed, not a scan
+    # engine, so it never affects the ok/degraded status (uploads would still 503)
+    feed = get_domain_feed()
+    if feed is not None:
+        count, updated = feed.stats()
         engines.append(
             EngineHealth(
-                name="URL blocklists",
-                type="blocklists",
+                name=feed.engine,
+                type="domain-feed",
                 enabled=True,
-                ready=count > 0,
-                version=None,
+                ready=feed.available(),
+                version=feed.version(),
                 rules=count,
                 rules_updated_at=_iso_utc(updated),
             )
@@ -1295,9 +1301,9 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
     else:
         engines.append(
             EngineHealth(
-                name="URL blocklists",
-                type="blocklists",
-                enabled=False,
+                name="Domain feed",
+                type="domain-feed",
+                enabled=bool(settings.domain_feed_dir or settings.domain_feed_socket),
                 ready=False,
                 version=None,
                 rules=None,
@@ -1306,7 +1312,7 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
         )
     status = (
         "ok"
-        if any(e.enabled and e.ready and e.type != "blocklists" for e in engines)
+        if any(e.enabled and e.ready and e.type != "domain-feed" for e in engines)
         else "degraded"
     )
     return HealthResponse(status=status, engines=engines)

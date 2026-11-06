@@ -161,26 +161,29 @@ def test_done_report_contract(client):
     assert "data-sha=" not in page.text
 
 
-def test_home_virustotal_layout_contract(client):
+def test_home_layout_contract(client):
     home = client.get("/ui/").text
-    # VT-style home: centered logo + tagline + FILE/URL/SEARCH widget tabs
-    assert 'class="vt-logo"' in home and "vt-tagline" in home
+    # home: centered logo + tagline + FILE/URL/SEARCH widget tabs
+    assert 'class="home-logo"' in home and "home-tagline" in home
     for tab in ['data-tab="file"', 'data-tab="url"', 'data-tab="search"']:
         assert tab in home, tab
     for panel in ['id="tab-file"', 'id="tab-url"', 'id="tab-search"']:
         assert panel in home, panel
     # the upload form still lives in the FILE panel with the full JS contract
     assert 'id="upload-form"' in home and 'action="/file/upload"' in home
-    # URL tab keeps the URL form contract
+    # URL tab keeps the URL form contract and must not point users at the API/healthz
     assert 'id="url-form"' in home and 'action="/ui/url/lookup"' in home
-    # ToS + privacy notice under the widget (VT-style) and the API bar below it
-    assert "vt-notice" in home
+    assert "domain feed" in home
+    assert "/healthz" not in home.split('id="tab-url"')[1].split("</section>")[0]
+    # ToS + privacy notice under the widget and the API bar below it
+    assert "home-notice" in home
     assert 'href="/ui/terms"' in home and "Terms of Service" in home
     assert 'href="/ui/privacy"' in home and "Privacy Notice" in home
     assert "not responsible for the contents of your submission" in home
-    assert "vt-api-bar" in home and 'href="/docs"' in home
-    # dark VirusTotal-like theme
-    assert "--bg: #1a1a2e" in home and "--brand: #4a8fe2" in home
+    assert "home-api-bar" in home and 'href="/docs"' in home
+    # warm friendly theme (teal on warm paper), not the dark VT palette
+    assert "--bg: #f7f5f0" in home and "--brand: #0f766e" in home
+    assert "#1a1a2e" not in home
 
 
 def test_terms_of_service_page(client):
@@ -217,7 +220,7 @@ def test_og_card_meta_on_all_pages(client):
         assert '<meta property="og:image" content="/static/og-card.svg">' in page, path
         assert '<meta property="og:site_name" content="ClamTotal">' in page, path
         assert '<meta name="twitter:card" content="summary_large_image">' in page, path
-        assert '<meta name="theme-color" content="#1a1a2e">' in page, path
+        assert '<meta name="theme-color" content="#0f766e">' in page, path
 
 
 def test_og_card_image_served(client):

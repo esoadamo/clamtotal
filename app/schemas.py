@@ -60,18 +60,18 @@ class FileReport(BaseModel):
 
 class UrlMatch(BaseModel):
     domain: str = Field(description="blocked domain/host that matched")
-    source: str = Field(description="blocklist source name, e.g. 'hagezi-tif'")
-    category: str = Field(description="blocklist category, e.g. 'malware' or 'gambling'")
+    source: str = Field(description="feed source name, e.g. 'hagezi-tif'")
+    category: str = Field(description="feed category, e.g. 'malware' or 'gambling'")
 
 
 class UrlScanResponse(BaseModel):
-    """POST /api/v2/urls — URL/domain check result (synchronous local blocklist lookup)."""
+    """POST /api/v2/urls — URL/domain check result (synchronous local domain-feed lookup)."""
 
     id: str = Field(description="base64url id of the normalized URL, for GET /api/v2/urls/{id}")
     url: str = Field(description="normalized URL that was checked")
-    verdict: str = Field(description="'malicious' when any blocklist matched, else 'harmless'")
-    categories: list[str] = Field(description="categories of the matched blocklists")
-    sources: list[str] = Field(description="blocklist sources that matched")
+    verdict: str = Field(description="'malicious' when any feed entry matched, else 'harmless'")
+    categories: list[str] = Field(description="categories of the matched feed entries")
+    sources: list[str] = Field(description="feed sources that matched")
     permalink: str = Field(description="UI report page path")
 
 
@@ -93,7 +93,7 @@ class UrlReport(BaseModel):
 
 class EngineHealth(BaseModel):
     name: str = Field(description="engine display name, e.g. 'ClamAV (clamd)'")
-    type: str = Field(description="'clamav', 'yara' or 'blocklists' (URL blocklist feed)")
+    type: str = Field(description="'clamav', 'yara' or 'domain-feed' (URL/domain feed)")
     enabled: bool = Field(description="whether ENABLED_SCANNERS selects this engine")
     ready: bool = Field(description="whether the engine is currently reachable/loaded")
     version: str | None = Field(default=None, description="engine version string, if known")
@@ -108,7 +108,7 @@ class HealthResponse(BaseModel):
         description="'ok' when at least one enabled engine is ready, else 'degraded'"
     )
     engines: list[EngineHealth] = Field(
-        description="scan engines plus the URL blocklist feed (type 'blocklists')"
+        description="scan engines plus the domain feed (type 'domain-feed')"
     )
 
 

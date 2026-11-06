@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Integer, PrimaryKeyConstraint, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -49,18 +49,6 @@ class Scan(Base):
         JSON, nullable=True
     )  # recursive child scans
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-
-
-class BlocklistEntry(Base):
-    """One blocked domain/host from a downloaded URL blocklist. Composite key on
-    (domain, source): the same domain can be listed by several sources/categories."""
-
-    __tablename__ = "blocklist_entries"
-    __table_args__ = (PrimaryKeyConstraint("domain", "source"),)
-
-    domain: Mapped[str] = mapped_column(String(255))
-    source: Mapped[str] = mapped_column(String(128))  # blocklist name (file stem)
-    category: Mapped[str] = mapped_column(String(64))  # e.g. malware, gambling, ads
 
 
 class UrlScan(Base):
