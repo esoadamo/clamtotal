@@ -77,7 +77,6 @@
       <dt>Categories</dt><dd>{% for c in categories %}<span class="badge suspicious" style="margin:2px">{{ c }}</span>{% else %}<span class="muted">—</span>{% endfor %}</dd>
       <dt>Last check</dt><dd>{{ scan.scanned_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
     </dl>
-    <p class="muted" style="margin-top:12px">JSON API: <a class="mono" href="/api/v2/urls/{{ scan.url_id }}">/api/v2/urls/{{ scan.url_id }}</a></p>
   </section>
 
   {% if relations %}

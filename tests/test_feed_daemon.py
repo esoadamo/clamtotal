@@ -177,6 +177,25 @@ def test_healthz_reports_feed_daemon(client, daemon, monkeypatch):
     assert feed_eng["enabled"] and feed_eng["ready"] and feed_eng["rules"] == 2
 
 
+def test_handle_conn_internal_error_answers_error(daemon, monkeypatch):
+    # a failing lookup must answer ERROR, not drop the connection
+    _, _, sock_path = daemon
+    client = DomainFeedClient(sock_path)
+    real_lookup = client.lookup
+    import app.feed_daemon as fd
+
+    feed_obj = fd.DomainFeed  # noqa: F841 (documentation)
+    # break the server-side lookup by monkeypatching the handle_conn's feed lookup
+    import app.domain_feed as df
+
+    monkeypatch.setattr(
+        df.DomainFeed, "lookup", lambda self, host: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    assert _raw(sock_path, b"zLOOKUP x.com\0") == b"ERROR internal error"
+    monkeypatch.undo()
+    assert real_lookup("evil-example.com")[0]["category"] == "malware"
+
+
 def test_main_parses_args(monkeypatch, tmp_path):
     import app.feed_daemon as fd
 

@@ -341,6 +341,20 @@ def test_api_scan_url_disabled_without_feed(client, monkeypatch):
     reset_domain_feed_cache()
 
 
+def test_api_scan_url_503_when_daemon_down_but_configured(client, monkeypatch, tmp_path):
+    # socket configured but daemon not running: live 503 (re-probed, not cached)
+    monkeypatch.setattr(settings, "domain_feed_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "domain_feed_socket", str(tmp_path / "missing.sock"))
+    reset_domain_feed_cache()
+    r = client.post("/api/v2/urls", data={"url": "http://example.com/"})
+    assert r.status_code == 503
+    body = client.get("/healthz").json()
+    feed_eng = body["engines"][2]
+    assert feed_eng["type"] == "domain-feed" and feed_eng["enabled"] is True
+    assert feed_eng["ready"] is False and feed_eng["rules"] is None
+    reset_domain_feed_cache()
+
+
 def test_ui_url_lookup_and_report_pages(client, feed_dir, monkeypatch):
     _seed(feed_dir)
     reset_domain_feed_cache()

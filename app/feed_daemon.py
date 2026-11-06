@@ -42,23 +42,29 @@ def handle_conn(conn: socket.socket, feed: DomainFeed) -> None:
     try:
         with conn:
             cmd = _recv_command(conn)
-            if cmd == b"zPING":
-                conn.sendall(b"PONG\x00")
-            elif cmd == b"zVERSION":
-                conn.sendall(feed.version().encode() + b"\x00")
-            elif cmd == b"zSTATS":
-                entries, updated = feed.stats()
-                conn.sendall(
-                    json.dumps(
-                        {"engine": feed.engine, "entries": entries, "updated_at": updated}
-                    ).encode()
-                    + b"\x00"
-                )
-            elif cmd.startswith(b"zLOOKUP "):
-                host = cmd[len(b"zLOOKUP ") :].decode(errors="replace")
-                conn.sendall(json.dumps(feed.lookup(host)).encode() + b"\x00")
-            else:
-                conn.sendall(b"ERROR unknown command\x00")
+            try:
+                if cmd == b"zPING":
+                    conn.sendall(b"PONG\x00")
+                elif cmd == b"zVERSION":
+                    conn.sendall(feed.version().encode() + b"\x00")
+                elif cmd == b"zSTATS":
+                    entries, updated = feed.stats()
+                    conn.sendall(
+                        json.dumps(
+                            {"engine": feed.engine, "entries": entries, "updated_at": updated}
+                        ).encode()
+                        + b"\x00"
+                    )
+                elif cmd.startswith(b"zLOOKUP "):
+                    host = cmd[len(b"zLOOKUP ") :].decode(errors="replace")
+                    conn.sendall(json.dumps(feed.lookup(host)).encode() + b"\x00")
+                else:
+                    conn.sendall(b"ERROR unknown command\x00")
+            except Exception:
+                # a failed lookup must answer ERROR while the conn is still open,
+                # not drop the connection silently
+                logger.exception("feed daemon: command failed")
+                conn.sendall(b"ERROR internal error\x00")
     except OSError:
         pass  # client went away mid-command
 

@@ -258,6 +258,7 @@ def test_domain_feed_wiring():
         in conf
     )
     assert "|gambling|" in conf
+    assert "stevenblack|ads|" in conf  # StevenBlack is an ads/tracking list, not malware
     # airgapped builds bake the feed at build time too
     assert re.search(r'AIRGAPPED" = "true" \]; then .*update-domain-feed\.sh', cf, re.S)
     # compose documents the sources-conf mount and the URLHAUS_AUTH_KEY env var
