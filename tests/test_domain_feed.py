@@ -167,15 +167,25 @@ def test_import_replaces_and_skips_unreadable(feed_dir, monkeypatch):
     # unreadable file is skipped
     (feed_dir / "a.txt").write_text("a-example.com\n")
     (feed_dir / "b.txt").write_text("b-example.com\n")
-    real_read_text = Path.read_text
+    real_open = Path.open
 
     def boom(self, *a, **kw):
         if self.name == "b.txt":
             raise OSError("nope")
-        return real_read_text(self, *a, **kw)
+        return real_open(self, *a, **kw)
 
-    monkeypatch.setattr(Path, "read_text", boom)
+    monkeypatch.setattr(Path, "open", boom)
     assert f.load() == 2  # only-one.example + a-example.com
+
+
+def test_import_streams_in_batches(feed_dir, monkeypatch):
+    # the import must stream line-by-line with batched commits (bounded memory on
+    # multi-hundred-MB lists), not read the whole file into RAM
+    (feed_dir / "big.txt").write_text("".join(f"d{i}.example\n" for i in range(10)))
+    monkeypatch.setattr(feed, "_IMPORT_BATCH", 3)  # force mid-file flushes
+    f = DomainFeed(str(feed_dir))
+    assert f.load() == 10
+    assert f.stats()[0] == 10
 
 
 def test_import_falls_back_when_lock_not_obtainable(feed_dir, monkeypatch):

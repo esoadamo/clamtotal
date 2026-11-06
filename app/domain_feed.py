@@ -177,27 +177,17 @@ def stamp_value(feed_dir: str) -> int | None:
     return None
 
 
+_IMPORT_BATCH = 50_000  # rows per executemany+commit while streaming a feed file
+
+
 def import_feed(db: Session, feed_dir: str) -> int:
     """(Re)load every *.txt in the feed dir into feed_entries, replacing the previous
-    set. The category comes from a '# clamtotal-category: <cat>' header line (written
-    by the update script) or falls back to the file name. Returns entry count."""
-    rows: list[dict] = []
+    set. Streams each file line by line and inserts in batches, so multi-hundred-MB
+    lists (hagezi/StevenBlack) don't spike the daemon's memory. The category comes
+    from a '# clamtotal-category: <cat>' header line (written by the update script)
+    or falls back to the file name. Returns entry count."""
     feed_path = Path(feed_dir) if feed_dir else None
-    if feed_path is not None and feed_path.is_dir():
-        for path in sorted(feed_path.glob("*.txt")):
-            source = path.stem
-            try:
-                lines = path.read_text(errors="replace").splitlines()
-            except OSError:
-                continue
-            category = next(
-                (m.group(1) for line in lines if (m := _CATEGORY_HEADER_RE.match(line))),
-                source,
-            )
-            for line in lines:
-                domain = parse_feed_line(line)
-                if domain:
-                    rows.append({"domain": domain, "source": source, "category": category})
+    count = 0
     # cross-process lock (same pattern as the YARA compile lock): with uvicorn
     # --workers N or the feed daemon, concurrent multi-MB inserts would otherwise
     # hit SQLite "database is locked"
@@ -212,14 +202,37 @@ def import_feed(db: Session, feed_dir: str) -> int:
             lock = None  # read-only dir: import anyway, without the lock
     try:
         db.execute(delete(FeedEntry))
-        if rows:
-            db.execute(insert(FeedEntry), rows)
         db.commit()
+        if feed_path is not None and feed_path.is_dir():
+            for path in sorted(feed_path.glob("*.txt")):
+                source = path.stem
+                category = source
+                batch: list[dict] = []
+                try:
+                    fh = path.open(errors="replace")
+                except OSError:
+                    continue
+                with fh:
+                    for line in fh:
+                        if category == source and (m := _CATEGORY_HEADER_RE.match(line)):
+                            category = m.group(1)
+                        domain = parse_feed_line(line)
+                        if domain:
+                            batch.append({"domain": domain, "source": source, "category": category})
+                            if len(batch) >= _IMPORT_BATCH:
+                                db.execute(insert(FeedEntry), batch)
+                                db.commit()
+                                count += len(batch)
+                                batch = []
+                if batch:
+                    db.execute(insert(FeedEntry), batch)
+                    db.commit()
+                    count += len(batch)
     finally:
         if lock is not None:
             lock.close()
-    logger.info("domain feed loaded: %d entries from %s", len(rows), feed_dir)
-    return len(rows)
+    logger.info("domain feed loaded: %d entries from %s", count, feed_dir)
+    return count
 
 
 class DomainFeed:
