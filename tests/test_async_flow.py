@@ -3,6 +3,7 @@ import logging
 
 import pytest
 from fakes import fake_scanner
+from sqlalchemy import select
 
 import app.main as main_module
 from app.db import SessionLocal
@@ -241,6 +242,14 @@ def test_scan_and_store_domain_feed_engine_infected(client, monkeypatch):
     assert "evil-example.com (malware, hagezi)" in feed_eng["signature"]
     assert scan.verdict == "infected"
     assert "evil-example.com" in (scan.signature or "")
+    # domains are auto-scanned: a cached UrlScan row exists for the hit domain
+    from app.models import UrlScan
+
+    with SessionLocal() as db:
+        row = db.execute(
+            select(UrlScan).where(UrlScan.host == "evil-example.com")
+        ).scalar_one_or_none()
+    assert row is not None and row.verdict == "malicious"
 
 
 def test_scan_and_store_domain_feed_engine_clean_and_error(client, monkeypatch):
@@ -285,8 +294,9 @@ def test_report_page_shows_domain_feed_verdict(client, monkeypatch):
     sha = r.json()["sha256"]
     page = client.get(f"/ui/file/{sha}")
     assert page.status_code == 200
-    assert "listed: malware (hagezi)" in page.text
-    assert "not listed" in page.text
+    assert 'badge malicious">malicious' in page.text  # embedded-files-style table badge
+    assert "malware (hagezi)" in page.text
+    assert 'badge harmless">harmless' in page.text
 
     class BoomFeed(FakeFeed):
         def lookup(self, host):

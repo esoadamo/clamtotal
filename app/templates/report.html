@@ -175,7 +175,17 @@
     {% endif %}
     {% if iocs.domains %}
     <h2 class="section-title">Domains ({{ iocs.domains | length }})</h2>
-    <ul class="ioc mono">{% for d in iocs.domains %}{% set m = (domain_results or {}).get(d, []) %}<li><a href="/ui/url/lookup?url={{ d | urlencode }}">{{ d | defang }}</a>{% if m %} <span class="flag">listed: {{ m[0].category }} ({{ m[0].source }})</span>{% elif domain_results is defined and d in domain_results %} <span class="muted">not listed</span>{% endif %}{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</li>{% endfor %}</ul>
+    <table>
+      <thead><tr><th>Domain</th><th>Detection</th></tr></thead>
+      <tbody>
+        {% for d in iocs.domains %}{% set m = (domain_results or {}).get(d, []) %}
+        <tr>
+          <td class="mono"><a href="/ui/url/lookup?url={{ d | urlencode }}">{{ d | defang }}</a>{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</td>
+          <td><span class="badge {{ 'malicious' if m else 'harmless' }}">{{ 'malicious' if m else 'harmless' }}</span>{% if m %} <span class="flag">{{ m[0].category }} ({{ m[0].source }})</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
     {% endif %}
     {% if iocs.ips %}
     <h2 class="section-title">Contacted IP addresses ({{ iocs.ips | length }})</h2>

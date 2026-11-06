@@ -453,12 +453,14 @@ def _scan_and_store(
         scan.engines = [dict(e) for e in engines]
         db.commit()
 
-    # domain feed as a detection engine: extracted domains are looked up locally
+    # domain feed as a detection engine: extracted domains are looked up locally AND
+    # auto-scanned (cached UrlScan rows), so they also appear in URL search/relations
     feed = get_domain_feed()
     if feed is not None:
         hits: list[str] = []
         try:
             for domain in (iocs.get("domains") or [])[:50]:
+                scan_url(db, domain, feed)
                 for m in feed.lookup(domain):
                     hits.append(f"{m['domain']} ({m['category']}, {m['source']})")
         except Exception:
