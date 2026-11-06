@@ -270,12 +270,16 @@ def test_healthz_clamav_down_is_degraded(client, monkeypatch):
 
 def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_path):
     import app.main as main_module
-    from app.scanner import YaraScanner
+    from app.config import settings
 
     (tmp_path / "r.yar").write_text("rule R1 { condition: true }\nrule R2 { condition: true }")
     monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"yara"})
-    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
+    monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
+    from app.scanner import get_yara_scanner
+
+    get_yara_scanner.cache_clear()
     body = client.get("/healthz").json()
+    get_yara_scanner.cache_clear()
     assert body["status"] == "ok"
     clam, yara_eng = body["engines"]
     assert clam == {
@@ -287,6 +291,7 @@ def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_
         "rules": None,
         "rules_updated_at": None,
     }
+    # healthz reports yara stats from disk WITHOUT compiling the rules (no per-worker spike)
     assert yara_eng["enabled"] and yara_eng["ready"] and yara_eng["rules"] == 2
     assert yara_eng["rules_updated_at"] is not None
 

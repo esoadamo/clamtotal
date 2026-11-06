@@ -23,6 +23,7 @@ from app.scanner import (
     get_scanner,
     get_yara_scanner,
     reset_scanner_cache,
+    yara_rules_stats,
 )
 
 
@@ -661,6 +662,35 @@ def test_count_rules_read_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "read_text", gone)
     assert _count_rules(p) == 0
+
+
+def test_yara_rules_stats_without_compiling(tmp_path):
+    assert yara_rules_stats("") == (None, None)
+    assert yara_rules_stats(str(tmp_path / "missing")) == (None, None)
+    assert yara_rules_stats(str(tmp_path)) == (None, None)  # no rule files
+    (tmp_path / "a.yar").write_text(
+        "rule R1 { condition: true }\nprivate rule R2 { condition: true }"
+    )
+    (tmp_path / "b.yar").write_text("rule R3 { condition: true }")
+    count, updated = yara_rules_stats(str(tmp_path))
+    assert count == 3 and updated is not None  # newest file mtime
+    (tmp_path / ".rules-stamp").write_text("")
+    count2, updated2 = yara_rules_stats(str(tmp_path))
+    assert count2 == 3 and updated2 is not None  # stamp mtime wins
+
+
+def test_get_yara_scanner_compiles_without_lock_when_unwritable(monkeypatch, tmp_path):
+    import fcntl
+
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
+    monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
+
+    def no_lock(fd, op):
+        raise OSError("read-only fs")
+
+    monkeypatch.setattr(fcntl, "flock", no_lock)
+    get_yara_scanner.cache_clear()
+    assert get_yara_scanner() is not None  # falls back to compiling without the lock
 
 
 def test_yara_scanner_rule_stats(tmp_path):

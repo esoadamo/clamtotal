@@ -22,6 +22,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     DATABASE_URL=sqlite:////data/clamtotal.db \
     UPLOAD_DIR=/data/uploads \
     YARA_RULES_DIR=/rules \
+    YARA_SOCKET=/tmp/yara.sock \
     CLAM_AUTOUPDATE=true
 
 RUN apt-get update \

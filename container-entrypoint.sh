@@ -88,19 +88,44 @@ for _ in range(60):
 sys.exit("clamd did not answer PING on 127.0.0.1:3310")
 EOF
 
+# YARA scan daemon: compiles the rule set ONCE in a single process and serves match
+# requests on $YARA_SOCKET; uvicorn workers query it instead of each compiling the
+# rules into their own RAM (which OOM-killed workers under --workers N). Started
+# before uvicorn; the web UI starts only after the daemon answers PING.
+if [ -n "${YARA_RULES_DIR:-}" ]; then
+  /app/.venv/bin/python -m app.yara_daemon \
+    --rules "$YARA_RULES_DIR" --socket "${YARA_SOCKET:-/tmp/yara.sock}" &
+  python - <<'EOF'
+import os, socket, sys, time
+
+sock_path = os.environ.get("YARA_SOCKET", "/tmp/yara.sock")
+for _ in range(60):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(sock_path)
+            s.sendall(b"zPING\0")
+            if b"PONG" in s.recv(64):
+                sys.exit(0)
+    except OSError:
+        pass
+    time.sleep(1)
+sys.exit(f"yara daemon did not answer PING on {sock_path}")
+EOF
+fi
+
 # Apply database migrations (creates the tables in /data/clamtotal.db on first start).
 # Use the venv binaries directly — a uv run wrapper would try to SYNC (network) at
 # runtime; all packages are already installed in the image at build time.
 /app/.venv/bin/alembic upgrade head
 
-# 2 workers per CPU core, capped at 4 (override with UVICORN_WORKERS): every worker
-# loads the full YARA rule set on first scan, and clamd holds the whole signature DB
-# in RAM — on a small VM, 8+ workers + clamd exceed the memory and the kernel OOM-
-# killer SIGKILLs workers ("Child process died" with NO faulthandler traceback).
+# 2 workers by default (override with UVICORN_WORKERS): every worker is a separate
+# process that compiles the full YARA rule set into its own RAM on first scan, and
+# clamd holds the whole signature DB in RAM — with many workers inside a small
+# container memory limit, the kernel OOM-killer SIGKILLs workers on the first
+# /healthz or upload ("Child process died" with NO faulthandler traceback).
 # Trust proxy headers so it works behind a Cloudflare Tunnel.
 # LOG_LEVEL=debug shows worker lifecycle + restart reasons in the container logs.
-workers="${UVICORN_WORKERS:-$(( $(nproc) * 2 ))}"
-[ "$workers" -gt 4 ] && workers=4
+workers="${UVICORN_WORKERS:-2}"
 echo "[entrypoint] starting uvicorn: workers=$workers log_level=${LOG_LEVEL:-info}"
 # The parent SIGKILLs any worker that does not answer its healthcheck ping within
 # --timeout-worker-healthcheck seconds (default 5) — long scans/rules compiles must

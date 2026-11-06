@@ -52,6 +52,10 @@ class Settings(BaseSettings):
 
     # local YARA rules directory (public rules only); empty disables the YARA engine
     yara_rules_dir: str = ""
+    # Unix socket of the YARA scan daemon (container sets /tmp/yara.sock): when set,
+    # workers query the daemon instead of compiling the rule set into their own RAM.
+    # Empty = in-process YaraScanner from YARA_RULES_DIR (local development).
+    yara_socket: str = ""
     # recursive scan of archive members: max members per archive, max depth
     max_embedded_files: int = 10
     max_scan_depth: int = 2

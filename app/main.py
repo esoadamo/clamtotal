@@ -59,6 +59,7 @@ from app.scanner import (
     enabled_scanners,
     get_scanner,
     get_yara_scanner,
+    yara_rules_stats,
 )
 from app.schemas import (
     ApiScanResponse,
@@ -1152,7 +1153,10 @@ def healthz() -> HealthResponse:
             )
         )
     if "yara" in enabled:
+        # disk-based rule stats (no compile in the worker); readiness is a daemon PING
+        # (or the in-process engine in dev) — never triggers a rules compile here
         yara_scanner = get_yara_scanner()
+        rules, updated = yara_rules_stats(settings.yara_rules_dir)
         engines.append(
             EngineHealth(
                 name=yara_scanner.engine if yara_scanner is not None else "YARA (local rules)",
@@ -1160,10 +1164,8 @@ def healthz() -> HealthResponse:
                 enabled=True,
                 ready=yara_scanner is not None and yara_scanner.available(),
                 version=getattr(yara, "__version__", None),
-                rules=yara_scanner.rules_count if yara_scanner is not None else None,
-                rules_updated_at=(
-                    _iso_utc(yara_scanner.rules_updated_at) if yara_scanner is not None else None
-                ),
+                rules=rules,
+                rules_updated_at=_iso_utc(updated),
             )
         )
     else:

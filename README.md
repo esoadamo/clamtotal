@@ -114,7 +114,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | `sqlite:///./clamtotal.db` | SQLAlchemy URL |
-| `UVICORN_WORKERS` | `min(nproc*2, 4)` in the container | uvicorn worker count; each worker is a separate process that loads the full compiled YARA rule set into its own RAM on first scan, while clamd holds the ClamAV signature DB in RAM — too many workers on a small memory limit get OOM-killed (workers die with no traceback; check `[entrypoint] memory:`, per-worker `rss=`, and `podman inspect --format '{{.State.OOMKilled}}'`) |
+| `UVICORN_WORKERS` | `2` in the container | uvicorn worker count; each worker is a separate process that compiles the full YARA rule set into its own RAM on first scan (the ClamAV DB is loaded once by clamd, not per worker) — too many workers on a small memory limit get OOM-killed on the first `/healthz`/upload (workers die with no traceback; check `[entrypoint] memory:`, per-worker `rss=`, and `podman inspect --format '{{.State.OOMKilled}}'`) |
 | `UVICORN_WORKER_HEALTHCHECK_TIMEOUT` | `120` | seconds the uvicorn parent waits for a worker healthcheck ping before SIGKILLing it (uvicorn default is 5 — too low for long scans) |
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
 | `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
@@ -132,6 +132,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `CLAMAV_DB_DIR` | unset (container: `/var/lib/clamav`) | ClamAV signature database directory; `/healthz` reports the signature count and last update time from it |
 | `LOG_LEVEL` | `info` | log level for the app logger and (in the container, via the entrypoint) uvicorn; `debug` shows worker lifecycle/restart reasons, scan start/done/failure logs, and native tracebacks on hard crashes (faulthandler) |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
+| `YARA_SOCKET` | unset (container: `/tmp/yara.sock`) | Unix socket of the YARA scan daemon (`app/yara_daemon.py`, started by the container entrypoint); workers query it over the socket instead of each compiling the rule set into their own RAM. Unset = in-process engine from `YARA_RULES_DIR` (local dev) |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |

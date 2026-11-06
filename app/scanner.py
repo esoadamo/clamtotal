@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fcntl
+import json
 import logging
 import os
 import re
@@ -445,11 +447,104 @@ def enabled_scanners() -> set[str]:
     return tokens
 
 
+class YaraDaemonClient:
+    """Client for the YARA scan daemon (app/yara_daemon.py): the rule set is compiled
+    once in the daemon process; workers just send the sample over a Unix socket and
+    get the matches back. Same protocol as clamd's z-commands."""
+
+    engine = "YARA (daemon)"
+
+    def __init__(self, socket_path: str) -> None:
+        self._socket_path = socket_path
+
+    def _connect(self) -> socket.socket:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(self._socket_path)
+        sock.settimeout(settings.clamd_timeout)
+        return sock
+
+    def _recv_response(self, sock: socket.socket) -> bytes:
+        response = b""
+        while b"\x00" not in response:
+            part = sock.recv(65536)
+            if not part:
+                break
+            response += part
+        return response.replace(b"\x00", b"")
+
+    def _roundtrip(self, payload: bytes) -> bytes:
+        with self._connect() as sock:
+            sock.sendall(payload)
+            return self._recv_response(sock)
+
+    def available(self) -> bool:
+        try:
+            return self._roundtrip(b"zPING\0") == b"PONG"
+        except OSError:
+            return False
+
+    def version(self) -> str | None:
+        try:
+            text = self._roundtrip(b"zVERSION\0").decode(errors="replace").strip()
+        except OSError:
+            return None
+        return text or None
+
+    def scan(self, data: bytes, path: Path | None = None) -> list[str]:
+        if path is not None and path.exists():
+            resp = self._roundtrip(b"zSCANPATH " + str(path).encode() + b"\0")
+        else:
+            with self._connect() as sock:
+                sock.sendall(b"zINSTREAM\0")
+                for offset in range(0, len(data), 64 * 1024):
+                    chunk = data[offset : offset + 64 * 1024]
+                    sock.sendall(struct.pack(">I", len(chunk)) + chunk)
+                sock.sendall(struct.pack(">I", 0))
+                resp = self._recv_response(sock)
+        if resp.startswith(b"ERROR"):
+            raise ScannerUnavailableError(resp.decode(errors="replace"))
+        return json.loads(resp)
+
+
+def yara_rules_stats(rules_dir: str) -> tuple[int | None, float | None]:
+    """(rule count, last-updated epoch seconds) from the rules dir WITHOUT compiling
+    anything — /healthz must not trigger a multi-hundred-MB yara.compile per worker.
+    Counts rule declarations in the source files; last-updated is the .rules-stamp
+    mtime (touched by update-yara-rules.sh) or the newest rule file."""
+    if not rules_dir or not Path(rules_dir).is_dir():
+        return None, None
+    files = [
+        p for p in Path(rules_dir).glob("**/*") if p.suffix in (".yar", ".yara") and p.is_file()
+    ]
+    if not files:
+        return None, None
+    count = sum(_count_rules(f) for f in files)
+    try:
+        updated = (Path(rules_dir) / ".rules-stamp").stat().st_mtime
+    except OSError:
+        updated = max((f.stat().st_mtime for f in files), default=None)
+    return count, updated
+
+
 @lru_cache(maxsize=1)
-def get_yara_scanner() -> YaraScanner | None:
-    if "yara" not in enabled_scanners() or not settings.yara_rules_dir:
+def get_yara_scanner() -> YaraScanner | YaraDaemonClient | None:
+    if "yara" not in enabled_scanners():
         return None
-    scanner = YaraScanner(settings.yara_rules_dir)
+    if settings.yara_socket:  # container: shared daemon holds the compiled rule set
+        client = YaraDaemonClient(settings.yara_socket)
+        return client if client.available() else None
+    if not settings.yara_rules_dir:  # dev: in-process engine
+        return None
+    # Serialize the (memory-hungry, multi-second) compile across uvicorn workers via a
+    # cross-process lock, so N workers don't compile the whole rule set simultaneously
+    # and spike past the container memory limit. If the lock file is not writable
+    # (read-only /rules mount), compile anyway without the lock.
+    try:
+        with open(Path(settings.yara_rules_dir) / ".compile.lock", "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            scanner = YaraScanner(settings.yara_rules_dir)
+    except OSError:
+        scanner = YaraScanner(settings.yara_rules_dir)
     return scanner if scanner.available() else None
 
 

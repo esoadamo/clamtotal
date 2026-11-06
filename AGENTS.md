@@ -20,7 +20,8 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `app/config.py` — env-based settings (pydantic-settings)
 - `app/db.py` — engine, `SessionLocal`, `get_db`, `Base`
 - `app/models.py` — `Scan` table (hashes, verdict, signature, URLs, ...)
-- `app/scanner.py` — `ClamdScanner` / `ClamscanScanner` (Scanner protocol) + `YaraScanner` (local public rules)
+- `app/scanner.py` — `ClamdScanner` / `ClamscanScanner` (Scanner protocol) + `YaraDaemonClient`; `YaraScanner` (in-process, dev) lives there too and is used by the daemon
+- `app/yara_daemon.py` — YARA scan daemon: compiles the rule set ONCE in one process and serves match requests over a Unix socket (`YARA_SOCKET`, started by the container entrypoint), so uvicorn workers don't each load the rules into their own RAM; in local dev (`YARA_SOCKET` unset) `get_yara_scanner()` falls back to the in-process `YaraScanner` from `YARA_RULES_DIR`
 - `app/analysis.py` — hashing (MD5/SHA-1/SHA-256/SHA-512/CRC32), IOC extraction (URLs, domains, IPs, emails, registry keys, BTC), PE/ELF/PDF/Office parsing, suspicious strings, archive extraction
 - `app/rules/` — bundled original public YARA rules (mounted at `/rules` in the container)
 - `scripts/update-signatures.sh`, `container/fangfrisch.conf` — official (freshclam) + unofficial (SaneSecurity via fangfrisch, which includes YARA rules) signature updates; `CLAM_AUTOUPDATE=false` for airgapped. (extremeshok/clamav-unofficial-sigs was dropped: the repo no longer ships signature files.) Build context is restricted by `.containerignore` so no secrets enter the image

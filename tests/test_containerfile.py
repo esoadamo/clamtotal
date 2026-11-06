@@ -45,12 +45,24 @@ def test_entrypoint_worker_count_configurable_capped_and_memory_logged():
     # worker count overridable and capped: each worker loads the full YARA rule set,
     # so uncapped nproc*2 workers OOM-kill each other on small VMs
     assert "UVICORN_WORKERS" in ep
-    assert '[ "$workers" -gt 4 ] && workers=4' in ep
+    assert (
+        'workers="${UVICORN_WORKERS:-2}"' in ep
+    )  # default 2: each worker loads the YARA rule set into its own RAM
     # memory visibility at startup so OOM kills ("Child process died", no traceback)
     # can be confirmed from the container logs
     assert "memory.max" in ep and "MemTotal" in ep
     # parent must not SIGKILL a worker mid-scan: raise the healthcheck ping timeout
     assert "--timeout-worker-healthcheck" in ep and "UVICORN_WORKER_HEALTHCHECK_TIMEOUT" in ep
+
+
+def test_entrypoint_starts_yara_daemon():
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    cf = (ROOT / "Containerfile").read_text()
+    # the rule set is compiled ONCE in a daemon process; workers query it via socket
+    assert "app.yara_daemon" in ep and "YARA_SOCKET" in ep
+    assert "YARA_SOCKET=/tmp/yara.sock" in cf
+    # the web UI starts only after the daemon answers PING (same pattern as clamd)
+    assert "yara daemon did not answer PING" in ep
 
 
 def test_signature_scripts_fail_gracefully_offline():
