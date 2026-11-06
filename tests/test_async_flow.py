@@ -325,6 +325,23 @@ def test_run_scan_file_logs_read_failure(client, monkeypatch, caplog, tmp_path):
     assert "scan of stored file failed" in caplog.text
 
 
+def test_recovery_runs_in_only_one_worker(client, monkeypatch):
+    import fcntl
+    from pathlib import Path
+
+    from app.config import settings
+
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    calls = []
+    monkeypatch.setattr(main_module, "_recover_pending_scans", lambda: calls.append(1))
+    main_module._recover_pending_scans_once()  # lock free -> recovery runs
+    assert calls == [1]
+    with open(Path(settings.upload_dir) / ".recovery.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        main_module._recover_pending_scans_once()  # lock held by "another worker"
+        assert calls == [1]
+
+
 def test_rss_mb(monkeypatch):
     assert main_module._rss_mb() is not None  # real /proc on Linux
 

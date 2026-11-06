@@ -1,4 +1,5 @@
 import faulthandler
+import fcntl
 import json
 import logging
 import os
@@ -84,6 +85,20 @@ logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 faulthandler.enable()
 
 
+def _recover_pending_scans_once() -> None:
+    """Run startup recovery in a single worker only: with --workers N, every worker
+    would otherwise re-run all pending scans (each compiling the full YARA rule
+    set), multiplying startup memory pressure. flock on a lock file in the data
+    dir; the first worker to acquire it does the recovery, the rest skip."""
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    with open(Path(settings.upload_dir) / ".recovery.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return  # another worker is already doing the recovery
+        _recover_pending_scans()
+
+
 def _recover_pending_scans() -> None:
     """Startup recovery: scans left in 'pending' by a restart are re-run if the
     stored sample still exists, or their DB row is deleted if it was pruned."""
@@ -139,7 +154,7 @@ def _rss_mb() -> float | None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     _probe_scanner_at_startup()
-    _recover_pending_scans()
+    _recover_pending_scans_once()
     rss = _rss_mb()
     logger.info(
         "worker up: pid=%d rss=%s",

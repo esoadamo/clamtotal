@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -18,6 +19,8 @@ from typing import Protocol
 import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -320,6 +323,7 @@ class YaraScanner:
             self._stamp = stamp
             self._rules_count = rules_count
             self._rules_updated = updated
+        logger.info("yara rules loaded: %d rules from %s", rules_count, self._rules_dir)
 
     def available(self) -> bool:
         with self._lock:
