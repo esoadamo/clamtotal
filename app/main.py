@@ -1301,6 +1301,14 @@ def _iso_utc(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
 
+def _daemon_detail(socket_path: str) -> str:
+    exists = Path(socket_path).exists() if socket_path else False
+    return (
+        f"daemon socket {socket_path or '(unset)'} not answering PING "
+        f"(socket file exists: {exists}) — check the container log for the daemon process"
+    )
+
+
 @app.get("/healthz", response_model=HealthResponse)
 def healthz(db: Session = Depends(get_db)) -> HealthResponse:
     """Service health plus per-engine readiness: whether each engine is enabled
@@ -1342,16 +1350,22 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
         # disk-based rule stats (no compile in the worker); readiness is a daemon PING
         # (or the in-process engine in dev) — never triggers a rules compile here
         yara_scanner = get_yara_scanner()
+        yara_ready = yara_scanner is not None and yara_scanner.available()
         rules, updated = yara_rules_stats(settings.yara_rules_dir)
         engines.append(
             EngineHealth(
                 name=yara_scanner.engine if yara_scanner is not None else "YARA (local rules)",
                 type="yara",
                 enabled=True,
-                ready=yara_scanner is not None and yara_scanner.available(),
+                ready=yara_ready,
                 version=getattr(yara, "__version__", None),
                 rules=rules,
                 rules_updated_at=_iso_utc(updated),
+                detail=(
+                    None
+                    if yara_ready or not settings.yara_socket
+                    else _daemon_detail(settings.yara_socket)
+                ),
             )
         )
     else:
@@ -1371,27 +1385,39 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
     feed = get_domain_feed()
     if feed is not None:
         count, updated = feed.stats()
+        feed_ready = feed.available()
         engines.append(
             EngineHealth(
                 name=feed.engine,
                 type="domain-feed",
                 enabled=True,
-                ready=feed.available(),
+                ready=feed_ready,
                 version=feed.version(),
                 rules=count,
                 rules_updated_at=_iso_utc(updated),
+                detail=(
+                    None
+                    if feed_ready or not settings.domain_feed_socket
+                    else _daemon_detail(settings.domain_feed_socket)
+                ),
             )
         )
     else:
+        feed_configured = bool(settings.domain_feed_dir or settings.domain_feed_socket)
         engines.append(
             EngineHealth(
                 name="Domain feed",
                 type="domain-feed",
-                enabled=bool(settings.domain_feed_dir or settings.domain_feed_socket),
+                enabled=feed_configured,
                 ready=False,
                 version=None,
                 rules=None,
                 rules_updated_at=None,
+                detail=(
+                    _daemon_detail(settings.domain_feed_socket)
+                    if feed_configured and settings.domain_feed_socket
+                    else None
+                ),
             )
         )
     status = (

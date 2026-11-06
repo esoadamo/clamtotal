@@ -101,6 +101,9 @@ class EngineHealth(BaseModel):
     rules_updated_at: str | None = Field(
         default=None, description="ISO 8601 UTC timestamp of the last rules update, if known"
     )
+    detail: str | None = Field(
+        default=None, description="diagnostic when enabled but not ready, e.g. daemon socket state"
+    )
 
 
 class HealthResponse(BaseModel):

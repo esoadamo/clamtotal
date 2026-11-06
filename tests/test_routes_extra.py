@@ -292,6 +292,7 @@ def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_
         "version": None,
         "rules": None,
         "rules_updated_at": None,
+        "detail": None,
     }
     # healthz reports yara stats from disk WITHOUT compiling the rules (no per-worker spike)
     assert yara_eng["enabled"] and yara_eng["ready"] and yara_eng["rules"] == 2
@@ -313,6 +314,7 @@ def test_healthz_yara_disabled_via_enabled_scanners(client, monkeypatch):
         "version": None,
         "rules": None,
         "rules_updated_at": None,
+        "detail": None,
     }
 
 

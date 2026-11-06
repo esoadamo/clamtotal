@@ -184,6 +184,17 @@ def test_mem_info(monkeypatch):
     assert _mem_info() == (100.0, "max")
 
 
+def test_healthz_detail_when_daemon_down(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "yara_socket", str(tmp_path / "missing.sock"))
+    monkeypatch.setattr(settings, "yara_rules_dir", "")
+    reset_yara_cache()
+    body = client.get("/healthz").json()
+    yara_eng = body["engines"][1]
+    assert yara_eng["enabled"] and yara_eng["ready"] is False
+    assert "missing.sock" in yara_eng["detail"]
+    reset_yara_cache()
+
+
 def test_main_parses_args(monkeypatch, tmp_path):
     import app.yara_daemon as yd
 
