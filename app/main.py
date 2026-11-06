@@ -6,9 +6,11 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 from anyio import to_thread
 from fastapi import (
     BackgroundTasks,
@@ -50,12 +52,15 @@ from app.scanner import (
     Scanner,
     ScannerUnavailableError,
     ScanResult,
+    clamav_db_stats,
+    enabled_scanners,
     get_scanner,
     get_yara_scanner,
 )
 from app.schemas import (
     ApiScanResponse,
     ChunkUploadResponse,
+    EngineHealth,
     ErrorResponse,
     FileReport,
     HealthResponse,
@@ -1027,6 +1032,75 @@ def api_report(hash_value: str, db: Session = Depends(get_db)) -> JSONResponse:
     )
 
 
+def _iso_utc(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
+
+
 @app.get("/healthz", response_model=HealthResponse)
 def healthz() -> HealthResponse:
-    return HealthResponse(status="ok")
+    """Service health plus per-engine readiness: whether each engine is enabled
+    (ENABLED_SCANNERS), ready (clamd PING / clamscan present / YARA rules loaded),
+    its version, rule count, and last rules update time."""
+    enabled = enabled_scanners()
+    engines: list[EngineHealth] = []
+    if "clamav" in enabled:
+        try:
+            scanner = get_scanner()
+        except ScannerUnavailableError:
+            scanner = None
+        ready = scanner is not None and scanner.available()
+        rules, updated = clamav_db_stats(settings.clamav_db_dir)
+        engines.append(
+            EngineHealth(
+                name=scanner.engine if scanner is not None else "ClamAV",
+                type="clamav",
+                enabled=True,
+                ready=ready,
+                version=scanner.version() if scanner is not None else None,
+                rules=rules,
+                rules_updated_at=_iso_utc(updated),
+            )
+        )
+    else:
+        engines.append(
+            EngineHealth(
+                name="ClamAV",
+                type="clamav",
+                enabled=False,
+                ready=False,
+                version=None,
+                rules=None,
+                rules_updated_at=None,
+            )
+        )
+    if "yara" in enabled:
+        yara_scanner = get_yara_scanner()
+        engines.append(
+            EngineHealth(
+                name=yara_scanner.engine if yara_scanner is not None else "YARA (local rules)",
+                type="yara",
+                enabled=True,
+                ready=yara_scanner is not None and yara_scanner.available(),
+                version=getattr(yara, "__version__", None),
+                rules=yara_scanner.rules_count if yara_scanner is not None else None,
+                rules_updated_at=(
+                    _iso_utc(yara_scanner.rules_updated_at) if yara_scanner is not None else None
+                ),
+            )
+        )
+    else:
+        engines.append(
+            EngineHealth(
+                name="YARA (local rules)",
+                type="yara",
+                enabled=False,
+                ready=False,
+                version=None,
+                rules=None,
+                rules_updated_at=None,
+            )
+        )
+    status = "ok" if any(e.enabled and e.ready for e in engines) else "degraded"
+    return HealthResponse(status=status, engines=engines)

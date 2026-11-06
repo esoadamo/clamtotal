@@ -17,6 +17,8 @@ from app.scanner import (
     ClamscanScanner,
     ScannerUnavailableError,
     YaraScanner,
+    _count_rules,
+    clamav_db_stats,
     enabled_scanners,
     get_scanner,
     get_yara_scanner,
@@ -596,6 +598,88 @@ def test_get_scanner_recovers_single_shot_after_failure(monkeypatch):
     state["up"] = True
     assert isinstance(get_scanner(), ClamdScanner)  # recovers without waiting again
     assert get_scanner() is get_scanner()  # memoized on success
+
+
+def test_clamd_version(monkeypatch):
+    fake = FakeSocket(b"ClamAV 1.4.1/27800/Fri Nov  5 2026\x00")
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
+    assert ClamdScanner().version() == "ClamAV 1.4.1/27800/Fri Nov  5 2026"
+    assert fake.sent == b"zVERSION\0"
+
+
+def test_clamd_version_unreachable(monkeypatch):
+    def refuse(addr, timeout=None):
+        raise OSError("refused")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    assert ClamdScanner().version() is None
+
+
+def test_clamd_version_empty_reply(monkeypatch):
+    fake = FakeSocket(b"")  # connection closes without any data
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: fake)
+    assert ClamdScanner().version() is None
+
+
+def test_clamscan_version(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, "ClamAV 1.2.3/27000/x", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ClamscanScanner().version() == "ClamAV 1.2.3/27000/x"
+
+    def no_binary(cmd, **kwargs):
+        raise OSError("not found")
+
+    monkeypatch.setattr(subprocess, "run", no_binary)
+    assert ClamscanScanner().version() is None
+
+
+def test_clamav_db_stats(tmp_path):
+    assert clamav_db_stats("") == (None, None)
+    assert clamav_db_stats(str(tmp_path / "missing")) == (None, None)
+    assert clamav_db_stats(str(tmp_path)) == (None, None)  # empty dir
+    (tmp_path / "notes.txt").write_text("not a database")
+    assert clamav_db_stats(str(tmp_path)) == (None, None)  # no db files
+
+    (tmp_path / "main.cvd").write_bytes(b"ClamAV-VDB:05 Nov 2026:27800:42:80:" + b"0" * 480)
+    (tmp_path / "bad.cvd").write_bytes(b"NOT-A-CVD:x:1:7:80:" + b"0" * 480)
+    (tmp_path / "broken.cvd").write_bytes(b"ClamAV-VDB:date:1:oops:80:" + b"0" * 480)
+    (tmp_path / "extra.hdb").write_text("a:1:S1\n# comment\n\nb:2:S2\n")
+    (tmp_path / "subdir").mkdir()  # non-file entries are skipped
+    total, updated = clamav_db_stats(str(tmp_path))
+    assert total == 42 + 2  # bad/broken CVD headers skipped
+    assert updated is not None
+
+
+def test_count_rules_read_error(monkeypatch, tmp_path):
+    p = tmp_path / "x.yar"
+    p.write_text("rule R { condition: true }")
+
+    def gone(self, **kwargs):
+        raise OSError("gone")
+
+    monkeypatch.setattr(Path, "read_text", gone)
+    assert _count_rules(p) == 0
+
+
+def test_yara_scanner_rule_stats(tmp_path):
+    (tmp_path / "a.yar").write_text(
+        "rule R1 { condition: true }\nprivate rule R2 { condition: true }\n"
+    )
+    (tmp_path / "b.yara").write_text("global rule R3 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+    assert scanner.rules_count == 3
+    assert scanner.rules_updated_at is not None  # newest rule file mtime (no stamp yet)
+
+    (tmp_path / ".rules-stamp").write_text("")
+    stamped = YaraScanner(str(tmp_path))
+    assert stamped.rules_updated_at is not None  # stamp mtime wins
+
+    (tmp_path / "broken.yar").write_text("rule Broken { condition: ")
+    fallback = YaraScanner(str(tmp_path))
+    assert fallback.available()  # per-file fallback
+    assert fallback.rules_count == 3  # broken file skipped, not counted
 
 
 def test_get_yara_scanner_none_when_yara_disabled(monkeypatch, tmp_path):

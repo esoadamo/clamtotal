@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     clamd_chunk_size: int = 64 * 1024
     clamscan_path: str = "clamscan"
     clamscan_timeout: int = 600
+    # ClamAV signature database directory (clamd's DatabaseDirectory); used by /healthz
+    # to report signature count and last update time. Empty = unknown. The container
+    # sets it to /var/lib/clamav.
+    clamav_db_dir: str = ""
 
     # comma-separated list of enabled scan engines ("clamav,yara" = both, the default);
     # unknown or empty values fail with an error instead of silently guessing

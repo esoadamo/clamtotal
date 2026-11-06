@@ -37,6 +37,10 @@ class Scanner(Protocol):
 
     def scan(self, data: bytes, path: Path | None = None) -> ScanResult: ...
 
+    def available(self) -> bool: ...
+
+    def version(self) -> str | None: ...
+
 
 class ClamdScanner:
     """Scans via clamd using the INSTREAM command over TCP or a Unix socket (container mode)."""
@@ -69,6 +73,21 @@ class ClamdScanner:
                 return b"PONG" in response
         except OSError:
             return False
+
+    def version(self) -> str | None:
+        """clamd VERSION reply (engine + signature DB version), None when unreachable."""
+        try:
+            with self._connect() as sock:
+                sock.sendall(b"zVERSION\0")
+                response = b""
+                while b"\n" not in response and b"\x00" not in response:
+                    part = sock.recv(256)
+                    if not part:
+                        break
+                    response += part
+        except OSError:
+            return None
+        return response.decode(errors="replace").replace("\x00", "").strip() or None
 
     def scan(self, data: bytes, path: Path | None = None) -> ScanResult:
         if path is not None and settings.clamd_socket:
@@ -195,10 +214,14 @@ class ClamscanScanner:
             suffix = version.stdout.strip() if version.returncode == 0 else ""
         except OSError:
             suffix = ""
+        self._version = suffix or None
         self.engine = f"ClamAV (clamscan) {suffix}".strip()
 
     def available(self) -> bool:
         return shutil.which(self._path) is not None
+
+    def version(self) -> str | None:
+        return self._version
 
     def scan(self, data: bytes, path: Path | None = None) -> ScanResult:
         # with a stored file, let clamscan read it directly instead of via stdin
@@ -224,6 +247,17 @@ class ClamscanScanner:
         return ScanResult("clean", None, self.engine, out.strip())
 
 
+_RULE_DECL = re.compile(r"(?m)^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z_]\w*")
+
+
+def _count_rules(path: Path) -> int:
+    """Number of YARA rule declarations in a source file (for /healthz)."""
+    try:
+        return len(_RULE_DECL.findall(path.read_text(errors="replace")))
+    except OSError:
+        return 0
+
+
 class YaraScanner:
     """Second engine: local YARA rules (yara-python). Fully offline, public rules only.
 
@@ -247,6 +281,8 @@ class YaraScanner:
         self._combined = None  # single yara.Rules compiled from all files, when possible
         self._per_file: list = []  # per-file compiled rules (fallback)
         self._stamp: int | None = None
+        self._rules_count = 0
+        self._rules_updated: float | None = None
         self._reloading: threading.Thread | None = None
         self._load()
 
@@ -258,27 +294,46 @@ class YaraScanner:
         )
         combined = None
         per_file: list = []
+        rules_count = 0
         if files:
             try:
                 combined = yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(files)})
+                rules_count = sum(_count_rules(f) for f in files)
             except yara.Error:
                 for f in files:
                     try:
                         per_file.append(yara.compile(filepath=str(f)))
+                        rules_count += _count_rules(f)
                     except yara.Error:
                         continue
         try:
             stamp = self._stamp_path.stat().st_mtime_ns
         except OSError:
             stamp = None
+        if stamp is not None:
+            updated: float | None = stamp / 1e9
+        else:
+            updated = max((f.stat().st_mtime for f in files), default=None)
         with self._lock:
             self._combined = combined
             self._per_file = per_file
             self._stamp = stamp
+            self._rules_count = rules_count
+            self._rules_updated = updated
 
     def available(self) -> bool:
         with self._lock:
             return self._combined is not None or bool(self._per_file)
+
+    @property
+    def rules_count(self) -> int:
+        with self._lock:
+            return self._rules_count
+
+    @property
+    def rules_updated_at(self) -> float | None:
+        with self._lock:
+            return self._rules_updated
 
     def _reload_if_stamped(self) -> None:
         try:
@@ -314,6 +369,60 @@ class YaraScanner:
             else:
                 results = pool.map(lambda r: r.match(data=data), rules_list)
             return sorted({m.rule for matches in results for m in matches})
+
+
+_CVD_SUFFIXES = {".cvd", ".cld"}
+_TEXT_DB_SUFFIXES = {
+    ".hdb",
+    ".hsb",
+    ".mdb",
+    ".msb",
+    ".ndb",
+    ".ldb",
+    ".idb",
+    ".fp",
+    ".sfp",
+    ".pdb",
+    ".wdb",
+    ".cbc",
+    ".crb",
+}
+
+
+def clamav_db_stats(db_dir: str) -> tuple[int | None, float | None]:
+    """(signature count, last-updated epoch seconds) from a ClamAV database directory.
+    CVD/CLD containers carry the signature count in their 512-byte header (4th colon
+    field); plain-text databases count one signature per non-empty, non-comment line.
+    Last-updated is the newest mtime among the database files (freshclam/fangfrisch
+    rewrite them on update). Returns (None, None) when the dir is unset, missing, or
+    has no database files."""
+    if not db_dir or not Path(db_dir).is_dir():
+        return None, None
+    total = 0
+    newest: float | None = None
+    found = False
+    for f in sorted(Path(db_dir).iterdir()):
+        if not f.is_file():
+            continue
+        suffix = f.suffix.lower()
+        if suffix not in _CVD_SUFFIXES and suffix not in _TEXT_DB_SUFFIXES:
+            continue
+        try:
+            mtime = f.stat().st_mtime
+            if suffix in _CVD_SUFFIXES:
+                with f.open("rb") as fh:
+                    header = fh.read(512).split(b":")
+                if len(header) < 4 or header[0] != b"ClamAV-VDB":
+                    continue
+                total += int(header[3])
+            else:
+                lines = f.read_text(errors="replace").splitlines()
+                total += sum(1 for line in lines if line.strip() and not line.startswith("#"))
+        except (OSError, ValueError):
+            continue
+        found = True
+        newest = mtime if newest is None else max(newest, mtime)
+    return (total, newest) if found else (None, None)
 
 
 _KNOWN_SCANNERS = {"clamav", "yara"}

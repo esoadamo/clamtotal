@@ -58,8 +58,23 @@ class FileReport(BaseModel):
     scanned_at: str = Field(description="ISO-8601 UTC timestamp of the last completed scan")
 
 
+class EngineHealth(BaseModel):
+    name: str = Field(description="engine display name, e.g. 'ClamAV (clamd)'")
+    type: str = Field(description="'clamav' or 'yara'")
+    enabled: bool = Field(description="whether ENABLED_SCANNERS selects this engine")
+    ready: bool = Field(description="whether the engine is currently reachable/loaded")
+    version: str | None = Field(default=None, description="engine version string, if known")
+    rules: int | None = Field(default=None, description="signature/rule count, null when unknown")
+    rules_updated_at: str | None = Field(
+        default=None, description="ISO 8601 UTC timestamp of the last rules update, if known"
+    )
+
+
 class HealthResponse(BaseModel):
-    status: str = Field(description="'ok' when the service is up")
+    status: str = Field(
+        description="'ok' when at least one enabled engine is ready, else 'degraded'"
+    )
+    engines: list[EngineHealth] = Field(default_factory=list)
 
 
 class ChunkUploadResponse(BaseModel):

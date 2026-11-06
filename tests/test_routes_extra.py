@@ -244,7 +244,81 @@ def test_chunked_upload_rejects_bad_input(client, monkeypatch):
 
 
 def test_healthz(client):
-    assert client.get("/healthz").json() == {"status": "ok"}
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok"
+    clam, yara_eng = body["engines"]
+    assert clam["type"] == "clamav" and clam["enabled"] and clam["ready"]
+    assert clam["name"] == "ClamAV (fake)" and clam["version"] == "ClamAV 1.0.0 (fake)"
+    assert clam["rules"] is None and clam["rules_updated_at"] is None  # no CLAMAV_DB_DIR
+    assert yara_eng["type"] == "yara" and yara_eng["enabled"] and not yara_eng["ready"]
+    assert yara_eng["version"] and yara_eng["rules"] is None
+
+
+def test_healthz_clamav_down_is_degraded(client, monkeypatch):
+    import app.main as main_module
+
+    def boom():
+        raise ScannerUnavailableError("no backend")
+
+    monkeypatch.setattr(main_module, "get_scanner", boom)
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    clam = body["engines"][0]
+    assert clam["enabled"] and not clam["ready"]
+    assert clam["name"] == "ClamAV" and clam["version"] is None
+
+
+def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_path):
+    import app.main as main_module
+    from app.scanner import YaraScanner
+
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }\nrule R2 { condition: true }")
+    monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"yara"})
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: YaraScanner(str(tmp_path)))
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok"
+    clam, yara_eng = body["engines"]
+    assert clam == {
+        "name": "ClamAV",
+        "type": "clamav",
+        "enabled": False,
+        "ready": False,
+        "version": None,
+        "rules": None,
+        "rules_updated_at": None,
+    }
+    assert yara_eng["enabled"] and yara_eng["ready"] and yara_eng["rules"] == 2
+    assert yara_eng["rules_updated_at"] is not None
+
+
+def test_healthz_yara_disabled_via_enabled_scanners(client, monkeypatch):
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"clamav"})
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok"
+    yara_eng = body["engines"][1]
+    assert yara_eng == {
+        "name": "YARA (local rules)",
+        "type": "yara",
+        "enabled": False,
+        "ready": False,
+        "version": None,
+        "rules": None,
+        "rules_updated_at": None,
+    }
+
+
+def test_healthz_reports_clamav_db_stats(client, monkeypatch, tmp_path):
+    from app.config import settings
+
+    (tmp_path / "main.cvd").write_bytes(b"ClamAV-VDB:05 Nov 2026:27800:1234567:80:" + b"0" * 480)
+    (tmp_path / "extra.hdb").write_text("a:1:S1\n# comment\n\nb:2:S2\n")
+    monkeypatch.setattr(settings, "clamav_db_dir", str(tmp_path))
+    body = client.get("/healthz").json()
+    clam = body["engines"][0]
+    assert clam["ready"] and clam["rules"] == 1234567 + 2
+    assert clam["rules_updated_at"] is not None
 
 
 def test_rate_limits_disabled_by_default(client):

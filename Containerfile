@@ -18,6 +18,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     CLAM_MODE=daemon \
     CLAMD_SOCKET=/tmp/clamd.sock \
+    CLAMAV_DB_DIR=/var/lib/clamav \
     DATABASE_URL=sqlite:////data/clamtotal.db \
     UPLOAD_DIR=/data/uploads \
     YARA_RULES_DIR=/rules \

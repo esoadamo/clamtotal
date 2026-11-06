@@ -7,6 +7,12 @@ class FakeScanner:
     def __init__(self) -> None:
         self.calls = 0
 
+    def available(self) -> bool:
+        return True
+
+    def version(self) -> str:
+        return "ClamAV 1.0.0 (fake)"
+
     def scan(self, data: bytes, path=None) -> ScanResult:
         self.calls += 1
         if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in data:

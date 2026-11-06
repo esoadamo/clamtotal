@@ -58,6 +58,12 @@ def test_engine_results_committed_as_they_arrive(client):
     class SlowScanner:
         engine = "ClamAV (slow)"
 
+        def available(self):
+            return True
+
+        def version(self):
+            return "slow-1.0"
+
         def scan(self, data, path=None):
             with SessionLocal() as db:  # separate session sees the committed progress
                 row = db.get(Scan, sha)
