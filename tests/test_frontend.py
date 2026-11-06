@@ -248,6 +248,9 @@ def test_download_button_disabled_when_sample_expired(client):
     sha = hashlib.sha256(content).hexdigest()
     page = client.get(f"/ui/file/{sha}").text
     assert f'href="/ui/file/{sha}/download"' in page  # enabled while the file is on disk
+    # while the sample exists, Reanalyze is the classic form POST
+    assert f'action="/ui/file/{sha}/rescan"' in page
+    assert 'id="rescan-btn"' not in page
 
     (Path(settings.upload_dir) / sha).unlink()  # simulate TTL expiry removing the file
     resp = client.get(f"/ui/file/{sha}")
@@ -255,6 +258,11 @@ def test_download_button_disabled_when_sample_expired(client):
     page = resp.text
     assert f'href="/ui/file/{sha}/download"' not in page
     assert 'disabled title="The file is already expired and deleted"' in page
+    # ...and Reanalyze becomes a file dialog that re-uploads the file with rescan=true
+    assert f'action="/ui/file/{sha}/rescan"' not in page
+    assert 'id="rescan-btn"' in page and f'data-sha="{sha}"' in page
+    assert 'data-chunk-size="' in page
+    assert 'id="rescan-input"' in page
     assert client.get(f"/ui/file/{sha}/download").status_code == 404
     # the scan record is kept in the database, only the file was removed
     from app.db import SessionLocal

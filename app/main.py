@@ -766,6 +766,7 @@ async def upload_chunk(
     index: int = Form(...),
     total: int = Form(...),
     name: str = Form(""),
+    rescan: bool = Form(False),
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -824,6 +825,7 @@ async def upload_chunk(
         final,
         hashes,
         name or file.filename or "upload.bin",
+        rescan,
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -867,6 +869,7 @@ async def upload_ws(
     sha256 = ""
     total = 0
     name = ""
+    rescan = False
     pending_index = -1
     pending_size = 0
     buf = bytearray()
@@ -887,6 +890,7 @@ async def upload_ws(
                     sha256 = str(ctrl["sha256"])
                     total = int(ctrl["total"])
                     name = str(ctrl.get("name", ""))
+                    rescan = bool(ctrl.get("rescan", False))
                     if not _CHUNK_NAME_RE.match(sha256) or total < 1:
                         await fail("invalid sha256/total")
                         return
@@ -949,6 +953,7 @@ async def upload_ws(
                         final,
                         hashes,
                         name or "upload.bin",
+                        rescan,
                     )
                     await websocket.send_text(
                         json.dumps({"type": "done", "sha256": scan.sha256, "cached": cached})
@@ -1011,6 +1016,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             "pending": pending,
             "poll_interval": settings.scan_poll_interval_ms,
             "domain_results": domain_results,
+            "chunk_size": settings.chunk_upload_size,
         },
     )
 
@@ -1140,6 +1146,7 @@ async def api_scan(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    rescan: bool = False,
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -1150,7 +1157,7 @@ async def api_scan(
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})
     scan, cached = await to_thread.run_sync(
-        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", False
+        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", rescan
     )
     return JSONResponse(
         status_code=200 if cached else 202,

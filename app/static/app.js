@@ -261,6 +261,23 @@
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
 
+  /* POST one multipart chunk; resolves with {status, body}, rejects transiently on network errors. */
+  function postChunk(url, fields, blob, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new global.XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = function () { resolve({ status: xhr.status, body: xhr.responseText }); };
+      xhr.onerror = function () { var e = new Error('network error'); e.transient = true; reject(e); };
+      var fd = new FormData();
+      Object.keys(fields).forEach(function (k) { fd.append(k, fields[k]); });
+      fd.append('file', blob, fields.name);
+      xhr.send(fd);
+    });
+  }
+
   function escapeHtml(value) {
     return String(value)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -364,6 +381,94 @@
     }, interval);
   }
 
+  /* Reanalyze on a report whose sample was deleted from the server: the Reanalyze
+     button opens a file dialog, the chosen file is hashed and must match the
+     report's SHA-256, then it is re-uploaded with rescan=true (whole-file or
+     chunked like the home-page upload) and the browser lands back on the report. */
+  function initRescan() {
+    var btn = $('rescan-btn'), input = $('rescan-input');
+    if (!btn || !input) return;
+    var sha = btn.dataset.sha;
+    var chunkSize = parseInt(btn.dataset.chunkSize || '0', 10);
+    btn.addEventListener('click', function () { input.click(); });
+    input.addEventListener('change', function () {
+      if (!input.files.length) return;
+      var file = input.files[0];
+      input.value = '';
+      openModal('Hashing ' + file.name + '…',
+        '<div class="spinner" style="margin:8px auto 0"></div>' +
+        '<div class="dz-status" id="hash-status">Hashing… 0%</div>' +
+        '<div class="progress-track"><div class="progress-bar" id="hash-bar"></div></div>');
+      hashFileWithProgress(file, function (pct) {
+        var s = $('hash-status'); if (s) s.textContent = 'Hashing… ' + pct + '%';
+        var b = $('hash-bar'); if (b) b.style.width = pct + '%';
+      }).then(function (fileSha) {
+        if (fileSha !== sha) {
+          openModal('File does not match this report',
+            'The SHA-256 of <strong>' + escapeHtml(file.name) + '</strong> (' +
+            '<span class="mono">' + fileSha.slice(0, 16) + '…</span>) does not match this report ' +
+            '(<span class="mono">' + sha.slice(0, 16) + '…</span>). Upload the exact original file.');
+          return;
+        }
+        uploadRescan(file, sha, chunkSize);
+      });
+    });
+
+    function uploadRescan(file, sha, chunkSize) {
+      openModal('Uploading ' + file.name + '…',
+        '<div class="spinner" style="margin:8px auto 0"></div>' +
+        '<div class="dz-status" id="up-status">Uploading… 0%</div>' +
+        '<div class="progress-track"><div class="progress-bar" id="up-bar"></div></div>');
+      var startedAt = Date.now();
+      function report(pct, sent) {
+        var b = $('up-bar'); if (b) b.style.width = pct + '%';
+        var s = $('up-status');
+        if (s) s.textContent = uploadStatusText(file.name, pct) +
+          (pct >= 100 ? '' : uploadStatsSuffix(sent, file.size, startedAt, Date.now()));
+      }
+      function finish() { global.location.href = '/ui/file/' + sha; }
+      function fail(msg) { openModal('Reanalyze failed', escapeHtml(String(msg))); }
+      if (!shouldUseChunks(file.size, chunkSize)) {
+        var xhr = new global.XMLHttpRequest();
+        xhr.open('POST', '/file/upload?rescan=true');
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable) report(Math.min(100, Math.round((e.loaded / e.total) * 100)), e.loaded);
+        };
+        xhr.upload.onload = function () { report(100, file.size); };
+        xhr.onload = function () {
+          if (xhr.status === 200 || xhr.status === 202) return finish();
+          fail('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
+        };
+        xhr.onerror = function () { fail('Network error while uploading.'); };
+        var fd = new FormData();
+        fd.append('file', file, file.name);
+        xhr.send(fd);
+        return;
+      }
+      var plan = chunkPlan(file.size, chunkSize);
+      var doneBytes = 0;
+      report(0, 0);
+      runPool(plan, 1, function (part) {
+        var blob = file.slice(part.start, part.end);
+        return withRetry(function () {
+          return postChunk('/file/upload/chunk', {
+            sha256: sha, index: String(part.index), total: String(plan.length),
+            name: file.name, rescan: 'true',
+          }, blob, function (frac) {
+            var sent = doneBytes + (part.end - part.start) * frac;
+            report(chunkProgressPct(doneBytes, (part.end - part.start) * frac, file.size), sent);
+          });
+        }, 3, 1500).then(function (res) {
+          if (res.status !== 200 && res.status !== 202) {
+            throw new Error('Upload failed (' + res.status + '): ' + String(res.body).slice(0, 200));
+          }
+          doneBytes += part.end - part.start;
+          report(chunkProgressPct(doneBytes, 0, file.size), doneBytes);
+        });
+      }).then(finish).catch(function (err) { fail(err && err.message); });
+    }
+  }
+
   function initUpload() {
     var dz = $('dropzone'), form = $('upload-form'), input = $('file-input');
     var idle = $('dz-idle'), progress = $('dz-progress'), spinner = $('dz-spinner');
@@ -378,22 +483,6 @@
         errorBox.style.display = 'block';
         errorBox.textContent = msg;
       }
-    }
-
-    function postChunk(url, fields, blob, onProgress) {
-      return new Promise(function (resolve, reject) {
-        var xhr = new global.XMLHttpRequest();
-        xhr.open('POST', url);
-        xhr.upload.onprogress = function (e) {
-          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-        };
-        xhr.onload = function () { resolve({ status: xhr.status, body: xhr.responseText }); };
-        xhr.onerror = function () { var e = new Error('network error'); e.transient = true; reject(e); };
-        var fd = new FormData();
-        Object.keys(fields).forEach(function (k) { fd.append(k, fields[k]); });
-        fd.append('file', blob, fields.name);
-        xhr.send(fd);
-      });
     }
 
     /* Large files: prefer a persistent WebSocket (small frames, no per-request proxy
@@ -669,13 +758,16 @@
     closeModal: closeModal,
     initTabs: initTabs,
     initPolling: initPolling,
+    initRescan: initRescan,
     initUpload: initUpload,
+    postChunk: postChunk,
   };
 
   if (global.document) {
     global.document.addEventListener('DOMContentLoaded', function () {
       initTabs();
       initPolling();
+      initRescan();
       initUpload();
     });
   }

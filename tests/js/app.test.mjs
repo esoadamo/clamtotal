@@ -56,6 +56,7 @@ test('modal functions are safe without a document', () => {
   assert.doesNotThrow(() => CT.closeModal());
   assert.doesNotThrow(() => CT.initTabs());
   assert.doesNotThrow(() => CT.initPolling());
+  assert.doesNotThrow(() => CT.initRescan());
   assert.doesNotThrow(() => CT.initUpload());
 });
 
@@ -477,4 +478,79 @@ test('uploadStatusText shows upload progress, then Combining once all bytes are 
   assert.equal(CT.uploadStatusText('a.bin', 99), 'Uploading a.bin… 99%');
   // 100% sent: the server is reassembling/hashing before the report page opens
   assert.equal(CT.uploadStatusText('a.bin', 100), 'Combining a.bin…');
+});
+
+function stubRescanDom(sha) {
+  const btn = { dataset: { sha, chunkSize: '0' }, listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
+  const input = { files: [], value: 'x', clicked: false, click() { this.clicked = true; }, listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
+  const els = { 'rescan-btn': btn, 'rescan-input': input };
+  ['modal-overlay', 'modal-title', 'modal-body'].forEach((id) => {
+    els[id] = { classList: { _c: null, add(c) { this._c = c; }, remove() { this._c = null; } }, textContent: '', innerHTML: '' };
+  });
+  globalThis.document = { getElementById: (id) => els[id] || null };
+  return { btn, input, els };
+}
+
+function stubFileReaderAndXhr(onSend) {
+  globalThis.FileReader = class {
+    readAsArrayBuffer(slice) {
+      this.result = slice._buf.buffer.slice(slice._buf.byteOffset, slice._buf.byteOffset + slice._buf.length);
+      queueMicrotask(() => this.onload());
+    }
+  };
+  globalThis.FormData = class { constructor() { this._d = {}; } append(k, v) { this._d[k] = v; } };
+  globalThis.XMLHttpRequest = class {
+    constructor() { this.upload = {}; }
+    open(method, url) { this._url = url; }
+    send(fd) { this._fd = fd; onSend && onSend(this); queueMicrotask(() => { this.upload.onload && this.upload.onload(); this.status = 202; this.responseText = '{}'; this.onload && this.onload(); }); }
+  };
+}
+
+test('initRescan opens a file dialog, verifies the hash and uploads with rescan=true', async () => {
+  const content = new TextEncoder().encode('rescan me please');
+  const sha = CT.sha256HexPure(content);
+  const { btn, input, els } = stubRescanDom(sha);
+  let sent = null;
+  stubFileReaderAndXhr((xhr) => { sent = xhr; });
+  globalThis.location = { href: '' };
+
+  CT.initRescan();
+  btn.listeners.click();
+  assert.equal(input.clicked, true); // file dialog opened
+
+  const file = { name: 'orig.bin', size: content.length, slice: (a, b) => ({ size: b - a, _buf: content.slice(a, b) }) };
+  input.files = [file];
+  input.listeners.change();
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.ok(sent, 'an upload XHR was sent');
+  assert.equal(sent._url, '/file/upload?rescan=true');
+  assert.equal(sent._fd._d.file, file);
+  assert.equal(globalThis.location.href, '/ui/file/' + sha); // back to the report
+  assert.doesNotMatch(els['modal-body'].innerHTML, /does not match/);
+
+  delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
+  delete globalThis.XMLHttpRequest; delete globalThis.location;
+});
+
+test('initRescan rejects a file whose hash does not match the report', async () => {
+  const sha = 'ab'.repeat(32);
+  const { btn, input, els } = stubRescanDom(sha);
+  let sent = null;
+  stubFileReaderAndXhr((xhr) => { sent = xhr; });
+  globalThis.location = { href: '' };
+
+  CT.initRescan();
+  const wrong = new TextEncoder().encode('different content entirely');
+  const file = { name: 'wrong.bin', size: wrong.length, slice: (a, b) => ({ size: b - a, _buf: wrong.slice(a, b) }) };
+  input.files = [file];
+  input.listeners.change();
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.equal(sent, null); // no upload happened
+  assert.match(els['modal-body'].innerHTML, /does not match/);
+  assert.equal(globalThis.location.href, '');
+
+  delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
+  delete globalThis.XMLHttpRequest; delete globalThis.location;
 });

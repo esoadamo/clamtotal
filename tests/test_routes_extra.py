@@ -788,6 +788,72 @@ def _ws_start(ws, sha, total, name="ws.bin"):
     ws.send_text(json.dumps({"type": "start", "sha256": sha, "total": total, "name": name}))
 
 
+def test_upload_endpoints_accept_rescan_flag(client, fake):
+    content = b"rescan flag sample"
+    sha = hashlib.sha256(content).hexdigest()
+    assert client.post("/file/upload", files={"file": ("r.bin", content)}).status_code == 202
+    # without the flag the cached report is returned (200)
+    r = client.post("/file/upload", files={"file": ("r.bin", content)})
+    assert r.status_code == 200 and r.json()["cached"] is True
+    # whole-file upload with rescan=true forces a new scan (202, scanner re-run)
+    calls = fake.calls
+    r = client.post("/file/upload?rescan=true", files={"file": ("r.bin", content)})
+    assert r.status_code == 202 and r.json()["cached"] is False
+    assert fake.calls == calls + 1
+    # VT-style API accepts the same flag
+    calls = fake.calls
+    r = client.post("/api/v2/files?rescan=true", files={"file": ("r.bin", content)})
+    assert r.status_code == 202
+    assert fake.calls == calls + 1
+    assert client.get(f"/api/v2/files/{sha}").json()["status"] == "done"
+
+
+def test_chunk_upload_rescan_flag(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "chunk_upload_size", 4)
+    content = b"chunk-rescan-flag-sample"  # 24 bytes -> 6 chunks of 4
+    sha = hashlib.sha256(content).hexdigest()
+    client.post("/file/upload", files={"file": ("c.bin", content)})
+    calls = fake.calls
+    resp = None
+    for i in range(6):
+        resp = client.post(
+            "/file/upload/chunk",
+            data={"sha256": sha, "index": str(i), "total": "6", "name": "c.bin", "rescan": "true"},
+            files={"file": ("c.bin", content[i * 4 : (i + 1) * 4])},
+        )
+    assert resp.status_code == 202 and resp.json()["cached"] is False
+    assert fake.calls == calls + 1  # the rescan flag forced a new scan
+    assert client.get(f"/api/v2/files/{sha}").json()["status"] == "done"
+
+
+def test_ws_upload_rescan_flag(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "ws_chunk_size", 1024)
+    content = b"ws rescan flag sample"
+    sha = hashlib.sha256(content).hexdigest()
+    client.post("/file/upload", files={"file": ("w.bin", content)})
+    calls = fake.calls
+    with client.websocket_connect("/file/upload/ws") as ws:
+        ws.send_text(
+            json.dumps(
+                {"type": "start", "sha256": sha, "total": 1, "name": "w.bin", "rescan": True}
+            )
+        )
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_text(json.dumps({"type": "chunk", "index": 0, "size": len(content)}))
+        ws.send_bytes(content)
+        assert ws.receive_json()["type"] == "ack"
+        done = ws.receive_json()
+    assert done["type"] == "done" and done["cached"] is False
+    # the scan runs in a daemon thread — wait for it like the happy-path test does
+    import time
+
+    for _ in range(50):
+        if fake.calls > calls:
+            break
+        time.sleep(0.1)
+    assert fake.calls == calls + 1
+
+
 def test_ws_upload_happy_path_with_resume(client, monkeypatch):
     import time
 

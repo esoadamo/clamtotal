@@ -19,9 +19,15 @@
       </div>
     </div>
     <div style="display:flex; gap:8px">
+      {% if stored_exists %}
       <form action="/ui/file/{{ scan.sha256 }}/rescan" method="post">
         <button class="btn outline" type="submit">Reanalyze</button>
       </form>
+      {% else %}
+      {# sample expired: reanalyze by re-uploading the exact file (hash is verified) #}
+      <button class="btn outline" type="button" id="rescan-btn" data-sha="{{ scan.sha256 }}" data-chunk-size="{{ chunk_size | default(0) }}" title="The sample was deleted from the server — upload the original file again to reanalyze">Reanalyze</button>
+      <input type="file" id="rescan-input" style="display:none">
+      {% endif %}
       {% if stored_exists %}
       <a class="btn" href="/ui/file/{{ scan.sha256 }}/download">Download</a>
       {% else %}
