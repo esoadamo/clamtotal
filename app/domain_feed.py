@@ -21,7 +21,6 @@ import re
 import socket
 import threading
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -316,14 +315,17 @@ class DomainFeedClient:
             response += part
         return response.replace(b"\x00", b"")
 
-    def _roundtrip(self, payload: bytes) -> bytes:
+    def _roundtrip(self, payload: bytes, timeout: float | None = None) -> bytes:
         with self._connect() as sock:
+            if timeout is not None:
+                sock.settimeout(timeout)
             sock.sendall(payload)
             return self._recv_response(sock)
 
     def available(self) -> bool:
+        # short timeout: a hung daemon must not stall /healthz
         try:
-            return self._roundtrip(b"zPING\0") == b"PONG"
+            return self._roundtrip(b"zPING\0", timeout=5) == b"PONG"
         except OSError:
             return False
 
@@ -348,14 +350,33 @@ class DomainFeedClient:
         return json.loads(resp)
 
 
-@lru_cache(maxsize=1)
+_feed_lock = threading.Lock()
+_feed_cache: DomainFeed | DomainFeedClient | None = None
+
+
+def reset_domain_feed_cache() -> None:
+    global _feed_cache
+    with _feed_lock:
+        _feed_cache = None
+
+
 def get_domain_feed() -> DomainFeed | DomainFeedClient | None:
-    """Resolve the domain feed once per process: the daemon over DOMAIN_FEED_SOCKET in
-    the container, else the in-process feed from DOMAIN_FEED_DIR (local dev), else None
-    (URL scanning disabled)."""
+    """Resolve the domain feed: the daemon over DOMAIN_FEED_SOCKET in the container,
+    else the in-process feed from DOMAIN_FEED_DIR (local dev), else None (URL scanning
+    disabled). Only a SUCCESS is memoized — a daemon that is down or slow at startup
+    must not be cached as None forever, or /healthz would show it not-ready even after
+    it recovers; failures re-probe cheaply (short PING) on every call."""
+    global _feed_cache
     if settings.domain_feed_socket:
+        with _feed_lock:
+            if _feed_cache is not None:
+                return _feed_cache
         client = DomainFeedClient(settings.domain_feed_socket)
-        return client if client.available() else None
+        if client.available():
+            with _feed_lock:
+                _feed_cache = client
+            return client
+        return None
     if not settings.domain_feed_dir:
         return None
     try:

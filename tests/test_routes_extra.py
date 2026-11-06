@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from app.config import settings
-from app.scanner import ScannerUnavailableError, get_scanner
+from app.scanner import ScannerUnavailableError, get_scanner, reset_yara_cache
 
 
 def test_openapi_docs_describe_current_rate_limits(client, monkeypatch):
@@ -278,11 +278,10 @@ def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_
     (tmp_path / "r.yar").write_text("rule R1 { condition: true }\nrule R2 { condition: true }")
     monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"yara"})
     monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
-    from app.scanner import get_yara_scanner
 
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     body = client.get("/healthz").json()
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert body["status"] == "ok"
     clam, yara_eng, _bl_eng = body["engines"]
     assert clam == {

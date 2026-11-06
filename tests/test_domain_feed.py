@@ -19,10 +19,11 @@ from app.domain_feed import (
     get_domain_feed,
     normalize_url_input,
     parse_feed_line,
+    reset_domain_feed_cache,
     scan_url,
 )
 from app.models import UrlScan
-from app.scanner import ScannerUnavailableError
+from app.scanner import ScannerUnavailableError, reset_yara_cache
 
 
 @pytest.fixture
@@ -31,9 +32,9 @@ def feed_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(settings, "domain_feed_dir", str(d))
     monkeypatch.setattr(settings, "domain_feed_socket", "")
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     yield d
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def _seed(d: Path) -> None:
@@ -254,15 +255,15 @@ def test_get_domain_feed_resolution(feed_dir, monkeypatch, tmp_path):
     _seed(feed_dir)
     f = get_domain_feed()
     assert isinstance(f, DomainFeed) and f.stats()[0] == 4
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     # socket set -> client (unavailable socket -> None)
     monkeypatch.setattr(settings, "domain_feed_socket", str(tmp_path / "missing.sock"))
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     assert get_domain_feed() is None
     # nothing configured -> None
     monkeypatch.setattr(settings, "domain_feed_socket", "")
     monkeypatch.setattr(settings, "domain_feed_dir", "")
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     assert get_domain_feed() is None
     # init failure -> None (logged), never crashes the app
     monkeypatch.setattr(settings, "domain_feed_dir", str(feed_dir))
@@ -272,9 +273,9 @@ def test_get_domain_feed_resolution(feed_dir, monkeypatch, tmp_path):
         lambda self, d, db_path=None: (_ for _ in ()).throw(OSError("no")),
         raising=False,
     )
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     assert get_domain_feed() is None
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 # ---------------------------------------------------------------- scan_url
@@ -306,7 +307,7 @@ def test_scan_url_verdicts_and_cache(feed_dir):
 
 def test_api_scan_url_and_report(client, feed_dir):
     _seed(feed_dir)
-    get_domain_feed.cache_clear()  # pick up the seeded feed dir
+    reset_domain_feed_cache()  # pick up the seeded feed dir
     r = client.post("/api/v2/urls", data={"url": "http://www.evil-example.com/x"})
     assert r.status_code == 200
     body = r.json()
@@ -332,17 +333,17 @@ def test_api_scan_url_and_report(client, feed_dir):
 def test_api_scan_url_disabled_without_feed(client, monkeypatch):
     monkeypatch.setattr(settings, "domain_feed_dir", "")
     monkeypatch.setattr(settings, "domain_feed_socket", "")
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     r = client.post("/api/v2/urls", data={"url": "http://example.com/"})
     assert r.status_code == 503
     assert "DOMAIN_FEED" in r.json()["detail"]
     assert client.get("/ui/url/lookup", params={"url": "http://example.com/"}).status_code == 503
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def test_ui_url_lookup_and_report_pages(client, feed_dir, monkeypatch):
     _seed(feed_dir)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     r = client.get("/ui/url/lookup", params={"url": "casino-example.com"}, follow_redirects=False)
     assert r.status_code == 303
     url_id = r.headers["location"].rsplit("/", 1)[-1]
@@ -354,16 +355,16 @@ def test_ui_url_lookup_and_report_pages(client, feed_dir, monkeypatch):
     assert client.get("/ui/url/lookup", params={"url": "!!"}).status_code == 400
     # harmless report renders with the empty-feed note when nothing is loaded
     monkeypatch.setattr(settings, "domain_feed_dir", str(feed_dir / "empty"))
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     r = client.get("/ui/url/lookup", params={"url": "plain-example.com"}, follow_redirects=False)
     page = client.get(r.headers["location"])
     assert "harmless" in page.text and "No domain-feed entries loaded" in page.text
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def test_url_report_has_file_report_ui_and_relations(client, feed_dir):
     _seed(feed_dir)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     # a file scan that contains the URL/domain -> shows up in the URL report relations
     content = b"see http://www.evil-example.com/payload and evil-example.com here"
     client.post("/file/upload", files={"file": ("evil.bin", content)})
@@ -391,7 +392,7 @@ def test_url_report_has_file_report_ui_and_relations(client, feed_dir):
 
 def test_search_shows_url_card_for_domains(client, feed_dir):
     _seed(feed_dir)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     page = client.get("/ui/search", params={"q": "www.evil-example.com"})
     assert page.status_code == 200
     assert "URL / domain check" in page.text
@@ -438,7 +439,7 @@ def test_home_page_has_url_form_without_internals(client):
 
 def test_healthz_lists_domain_feed_as_engine(client, feed_dir, monkeypatch):
     _seed(feed_dir)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     body = client.get("/healthz").json()
     feed_eng = body["engines"][2]
     assert feed_eng["type"] == "domain-feed"
@@ -448,19 +449,19 @@ def test_healthz_lists_domain_feed_as_engine(client, feed_dir, monkeypatch):
     # disabled when neither dir nor socket is configured
     monkeypatch.setattr(settings, "domain_feed_dir", "")
     monkeypatch.setattr(settings, "domain_feed_socket", "")
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     body = client.get("/healthz").json()
     feed_eng = body["engines"][2]
     assert feed_eng["type"] == "domain-feed" and feed_eng["enabled"] is False
     assert feed_eng["ready"] is False and feed_eng["rules"] is None
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def test_healthz_feed_alone_does_not_make_service_ok(client, feed_dir, monkeypatch):
     import app.main as main_module
 
     _seed(feed_dir)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
     def boom():
         raise ScannerUnavailableError("no backend")
@@ -468,14 +469,13 @@ def test_healthz_feed_alone_does_not_make_service_ok(client, feed_dir, monkeypat
     monkeypatch.setattr(main_module, "get_scanner", boom)
     monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"clamav", "yara"})
     monkeypatch.setattr(settings, "yara_rules_dir", "")  # no in-process yara engine
-    from app.scanner import get_yara_scanner
 
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     body = client.get("/healthz").json()
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert body["engines"][2]["type"] == "domain-feed" and body["engines"][2]["ready"] is True
     assert body["status"] == "degraded"  # feed ready, but no scan engine ready
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def test_url_scan_rate_limited(client, monkeypatch):

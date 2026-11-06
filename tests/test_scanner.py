@@ -23,6 +23,7 @@ from app.scanner import (
     get_scanner,
     get_yara_scanner,
     reset_scanner_cache,
+    reset_yara_cache,
     yara_rules_stats,
 )
 
@@ -145,12 +146,12 @@ def test_yara_scanner_matches_filepath(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def clear_caches(monkeypatch):
     reset_scanner_cache()
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     enabled_scanners.cache_clear()
     monkeypatch.setattr(scanner_module.time, "sleep", lambda s: None)  # keep retry loop fast
     yield
     reset_scanner_cache()
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     enabled_scanners.cache_clear()
 
 
@@ -456,10 +457,10 @@ def test_yara_scanner_empty_and_populated(tmp_path, monkeypatch):
     assert scanner.scan(b"anything") == ["R1"]
     assert YaraScanner(str(tmp_path / "nonexistent")).scan(b"x") == []
     monkeypatch.setattr(settings, "yara_rules_dir", str(tmp_path))
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert get_yara_scanner() is not None
     monkeypatch.setattr(settings, "yara_rules_dir", "")
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert get_yara_scanner() is None
 
 
@@ -690,7 +691,7 @@ def test_get_yara_scanner_compiles_without_lock_when_unwritable(monkeypatch, tmp
         raise OSError("read-only fs")
 
     monkeypatch.setattr(fcntl, "flock", no_lock)
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert get_yara_scanner() is not None  # falls back to compiling without the lock
 
 

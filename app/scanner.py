@@ -580,14 +580,17 @@ class YaraDaemonClient:
             response += part
         return response.replace(b"\x00", b"")
 
-    def _roundtrip(self, payload: bytes) -> bytes:
+    def _roundtrip(self, payload: bytes, timeout: float | None = None) -> bytes:
         with self._connect() as sock:
+            if timeout is not None:
+                sock.settimeout(timeout)
             sock.sendall(payload)
             return self._recv_response(sock)
 
     def available(self) -> bool:
+        # short timeout: a hung daemon must not stall /healthz for clamd_timeout
         try:
-            return self._roundtrip(b"zPING\0") == b"PONG"
+            return self._roundtrip(b"zPING\0", timeout=5) == b"PONG"
         except OSError:
             return False
 
@@ -634,10 +637,17 @@ def yara_rules_stats(rules_dir: str) -> tuple[int | None, float | None]:
     return count, updated
 
 
-@lru_cache(maxsize=1)
-def get_yara_scanner() -> YaraScanner | YaraDaemonClient | None:
-    if "yara" not in enabled_scanners():
-        return None
+_yara_lock = threading.Lock()
+_yara_cache: YaraScanner | YaraDaemonClient | None = None
+
+
+def reset_yara_cache() -> None:
+    global _yara_cache
+    with _yara_lock:
+        _yara_cache = None
+
+
+def _build_yara_scanner() -> YaraScanner | YaraDaemonClient | None:
     if settings.yara_socket:  # container: shared daemon holds the compiled rule set
         client = YaraDaemonClient(settings.yara_socket)
         return client if client.available() else None
@@ -654,6 +664,24 @@ def get_yara_scanner() -> YaraScanner | YaraDaemonClient | None:
     except OSError:
         scanner = YaraScanner(settings.yara_rules_dir)
     return scanner if scanner.available() else None
+
+
+def get_yara_scanner() -> YaraScanner | YaraDaemonClient | None:
+    """Resolve the YARA engine. Only a SUCCESS is memoized: a daemon that is down or
+    slow at startup must not be cached as None forever, or /healthz would show the
+    engine as not-ready even after the daemon recovers. Failures re-probe cheaply
+    (short PING) on every call."""
+    global _yara_cache
+    if "yara" not in enabled_scanners():
+        return None
+    with _yara_lock:
+        if _yara_cache is not None:
+            return _yara_cache
+    scanner = _build_yara_scanner()
+    if scanner is not None:
+        with _yara_lock:
+            _yara_cache = scanner
+    return scanner
 
 
 _MODE_ALIASES = {

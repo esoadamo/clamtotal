@@ -11,7 +11,7 @@ import pytest
 
 import app.domain_feed as feed_mod
 from app.config import settings
-from app.domain_feed import DomainFeedClient, get_domain_feed
+from app.domain_feed import DomainFeedClient, get_domain_feed, reset_domain_feed_cache
 from app.feed_daemon import handle_conn, main, serve
 
 
@@ -38,7 +38,7 @@ def daemon(tmp_path):
     else:
         pytest.fail("feed daemon did not start")
     yield feed_dir, db_path, sock_path
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
 
 
 def _raw(sock_path, payload):
@@ -75,6 +75,21 @@ def test_client_unavailable_when_no_daemon(tmp_path):
     assert client.available() is False
     assert client.version() is None
     assert client.stats() == (0, None)
+
+
+def test_get_domain_feed_recovers_when_daemon_comes_up_later(daemon, monkeypatch, tmp_path):
+    # the failure must NOT be cached: once the daemon answers, the next call must pick
+    # it up without a worker restart (lru_cache used to freeze None forever)
+    _, _, sock_path = daemon
+    monkeypatch.setattr(settings, "domain_feed_socket", str(tmp_path / "later.sock"))
+    reset_domain_feed_cache()
+    assert get_domain_feed() is None
+    monkeypatch.setattr(settings, "domain_feed_socket", sock_path)
+    feed = get_domain_feed()
+    assert isinstance(feed, DomainFeedClient)
+    assert feed.stats()[0] == 2
+    assert get_domain_feed() is feed  # success is memoized
+    reset_domain_feed_cache()
 
 
 def test_client_recv_handles_server_closing_without_nul(tmp_path):
@@ -145,7 +160,7 @@ def test_handle_conn_directly_via_socketpair(tmp_path):
 def test_get_domain_feed_uses_daemon_socket(daemon, monkeypatch):
     _, _, sock_path = daemon
     monkeypatch.setattr(settings, "domain_feed_socket", sock_path)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     client = get_domain_feed()
     assert isinstance(client, DomainFeedClient)
     assert client.lookup("evil-example.com")[0]["category"] == "malware"
@@ -154,7 +169,7 @@ def test_get_domain_feed_uses_daemon_socket(daemon, monkeypatch):
 def test_healthz_reports_feed_daemon(client, daemon, monkeypatch):
     _, _, sock_path = daemon
     monkeypatch.setattr(settings, "domain_feed_socket", sock_path)
-    get_domain_feed.cache_clear()
+    reset_domain_feed_cache()
     body = client.get("/healthz").json()
     feed_eng = body["engines"][2]
     assert feed_eng["type"] == "domain-feed"

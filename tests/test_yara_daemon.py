@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 from app.config import settings
-from app.scanner import ScannerUnavailableError, YaraDaemonClient, get_yara_scanner
+from app.scanner import (
+    ScannerUnavailableError,
+    YaraDaemonClient,
+    get_yara_scanner,
+    reset_yara_cache,
+)
 from app.yara_daemon import handle_conn, main, serve
 
 
@@ -31,7 +36,7 @@ def daemon(tmp_path):
     else:
         pytest.fail("yara daemon did not start")
     yield rules, sock_path
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
 
 
 def _raw(sock_path, payload, read=True):
@@ -120,7 +125,7 @@ def test_get_yara_scanner_uses_daemon_socket(daemon, monkeypatch):
     rules, sock_path = daemon
     monkeypatch.setattr(settings, "yara_socket", sock_path)
     monkeypatch.setattr(settings, "yara_rules_dir", str(rules))
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     client = get_yara_scanner()
     assert isinstance(client, YaraDaemonClient)
     assert client.scan(b"MALWARE-MARKER-XYZ") == ["R1"]
@@ -128,8 +133,24 @@ def test_get_yara_scanner_uses_daemon_socket(daemon, monkeypatch):
 
 def test_get_yara_scanner_daemon_down_returns_none(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "yara_socket", str(tmp_path / "missing.sock"))
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     assert get_yara_scanner() is None
+
+
+def test_get_yara_scanner_recovers_when_daemon_comes_up_later(daemon, monkeypatch, tmp_path):
+    # the failure must NOT be cached: once the daemon starts answering, the next call
+    # must pick it up without a worker restart (lru_cache used to freeze None forever)
+    rules, sock_path = daemon
+    missing = str(tmp_path / "later.sock")
+    monkeypatch.setattr(settings, "yara_socket", missing)
+    reset_yara_cache()
+    assert get_yara_scanner() is None
+    monkeypatch.setattr(settings, "yara_socket", sock_path)
+    client = get_yara_scanner()
+    assert isinstance(client, YaraDaemonClient)
+    assert client.scan(b"MALWARE-MARKER-XYZ") == ["R1"]
+    assert get_yara_scanner() is client  # success is memoized
+    reset_yara_cache()
 
 
 def test_healthz_reports_yara_daemon(client, daemon, monkeypatch):
@@ -138,7 +159,7 @@ def test_healthz_reports_yara_daemon(client, daemon, monkeypatch):
     rules, sock_path = daemon
     monkeypatch.setattr(settings, "yara_socket", sock_path)
     monkeypatch.setattr(settings, "yara_rules_dir", str(rules))
-    get_yara_scanner.cache_clear()
+    reset_yara_cache()
     body = client.get("/healthz").json()
     yara_eng = body["engines"][1]
     assert yara_eng["name"] == "YARA (daemon)"
