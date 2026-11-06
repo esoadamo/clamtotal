@@ -10,6 +10,13 @@ from app.models import Scan
 from app.scanner import ScannerUnavailableError, ScanResult
 
 
+@pytest.fixture(autouse=True)
+def no_feed_by_default(monkeypatch):
+    # conftest configures an (empty) DOMAIN_FEED_DIR; engine-list tests here assert
+    # clamav/yara rows only, so disable the feed unless a test enables it explicitly
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: None)
+
+
 def test_pending_report_page_shows_spinner_and_polls(client):
     sha = "ab" * 32
     with SessionLocal() as db:
@@ -205,6 +212,89 @@ def test_enqueue_keeps_live_progress_when_already_pending(client):
         assert scan.status == "pending"
         assert scan.engines == live  # untouched, no flicker back to all-scanning
         assert "second.bin" in (scan.names or [])  # new name still recorded
+
+
+class FakeFeed:
+    engine = "Domain feed (fake)"
+
+    def __init__(self, hits=None):
+        self.hits = hits or {}
+
+    def lookup(self, host):
+        return self.hits.get(host, [])
+
+
+def test_scan_and_store_domain_feed_engine_infected(client, monkeypatch):
+    feed = FakeFeed(
+        {
+            "evil-example.com": [
+                {"domain": "evil-example.com", "source": "hagezi", "category": "malware"}
+            ]
+        }
+    )
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: feed)
+    content = b"sample contacting http://evil-example.com/x now"
+    with SessionLocal() as db:
+        scan, _ = main_module._scan_and_store(db, fake_scanner, content, "dom.bin", False)
+    feed_eng = next(e for e in scan.engines or [] if e["name"] == "Domain feed (fake)")
+    assert feed_eng["status"] == "done" and feed_eng["verdict"] == "infected"
+    assert "evil-example.com (malware, hagezi)" in feed_eng["signature"]
+    assert scan.verdict == "infected"
+    assert "evil-example.com" in (scan.signature or "")
+
+
+def test_scan_and_store_domain_feed_engine_clean_and_error(client, monkeypatch):
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: FakeFeed())
+    content = b"benign sample with benign-example.org inside"
+    with SessionLocal() as db:
+        scan, _ = main_module._scan_and_store(db, fake_scanner, content, "ok.bin", False)
+    feed_eng = next(e for e in scan.engines or [] if e["name"] == "Domain feed (fake)")
+    assert feed_eng["verdict"] == "clean" and feed_eng["signature"] is None
+    assert scan.verdict == "clean"
+
+    class BoomFeed(FakeFeed):
+        def lookup(self, host):
+            raise RuntimeError("feed down")
+
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: BoomFeed())
+    content2 = b"another sample with other-example.net inside"
+    with SessionLocal() as db:
+        scan2, _ = main_module._scan_and_store(db, fake_scanner, content2, "err.bin", False)
+    feed_eng2 = next(e for e in scan2.engines or [] if e["name"] == "Domain feed (fake)")
+    assert feed_eng2["verdict"] == "clean"  # feed errors are non-fatal
+    assert scan2.verdict == "clean"
+
+
+def test_scanning_engines_includes_domain_feed(client, monkeypatch):
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: FakeFeed())
+    names = [e["name"] for e in main_module._scanning_engines()]
+    assert names == ["ClamAV (fake)", "Domain feed (fake)"]
+
+
+def test_report_page_shows_domain_feed_verdict(client, monkeypatch):
+    feed = FakeFeed(
+        {
+            "evil-example.com": [
+                {"domain": "evil-example.com", "source": "hagezi", "category": "malware"}
+            ]
+        }
+    )
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: feed)
+    content = b"report sample with evil-example.com and clean-example.org"
+    r = client.post("/file/upload", files={"file": ("r.bin", content)})
+    sha = r.json()["sha256"]
+    page = client.get(f"/ui/file/{sha}")
+    assert page.status_code == 200
+    assert "listed: malware (hagezi)" in page.text
+    assert "not listed" in page.text
+
+    class BoomFeed(FakeFeed):
+        def lookup(self, host):
+            raise RuntimeError("feed down")
+
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: BoomFeed())
+    page2 = client.get(f"/ui/file/{sha}")  # feed error must not break the report
+    assert page2.status_code == 200
 
 
 def test_scanning_engines_falls_back_without_clamav(client, monkeypatch):

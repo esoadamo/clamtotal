@@ -372,6 +372,9 @@ def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
     yara = get_yara_scanner()
     if yara is not None:
         engines.append({"name": yara.engine, "status": "scanning"})
+    feed = get_domain_feed()
+    if feed is not None:
+        engines.append({"name": feed.engine, "status": "scanning"})
     return engines
 
 
@@ -388,6 +391,7 @@ def _scan_and_store(
     Engine results are committed one by one as they arrive (per-engine status
     "scanning" -> "done"), so the report page shows each verdict live."""
     hashes = compute_hashes(data)
+    iocs = extract_iocs(data)  # early: the domain feed engine below scans the domains
     existing = db.get(Scan, hashes["sha256"])
     if existing and not rescan:
         return existing, True
@@ -445,6 +449,27 @@ def _scan_and_store(
                 "signature": ", ".join(matches) if matches else None,
             }
         )
+        engine_idx += 1
+        scan.engines = [dict(e) for e in engines]
+        db.commit()
+
+    # domain feed as a detection engine: extracted domains are looked up locally
+    feed = get_domain_feed()
+    if feed is not None:
+        hits: list[str] = []
+        try:
+            for domain in (iocs.get("domains") or [])[:50]:
+                for m in feed.lookup(domain):
+                    hits.append(f"{m['domain']} ({m['category']}, {m['source']})")
+        except Exception:
+            logger.warning("domain feed lookup failed during scan", exc_info=True)
+        engines[engine_idx].update(
+            {
+                "status": "done",
+                "verdict": "infected" if hits else "clean",
+                "signature": ", ".join(sorted(set(hits))) if hits else None,
+            }
+        )
         scan.engines = [dict(e) for e in engines]
         db.commit()
 
@@ -469,7 +494,6 @@ def _scan_and_store(
     # commit the offline analysis (extended hashes, urls, iocs, behavior) while the
     # scan is still pending, so the report page fills in the tabs progressively
     urls = extract_urls(data)
-    iocs = extract_iocs(data)
     scan.sha512 = hashes["sha512"]
     scan.crc32 = hashes["crc32"]
     scan.file_type = file_type
@@ -963,6 +987,17 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
                 reasons.append(f"contained in this archive ({other.file_name})")
             if reasons:
                 relations.append((other, reasons))
+    # live domain-feed verdicts for the extracted domains (Network tab), so each
+    # domain shows whether it is listed; the link target caches a full URL scan
+    domain_results: dict[str, list[dict]] = {}
+    feed = get_domain_feed()
+    if feed is not None and not pending:
+        for d in (scan.iocs or {}).get("domains", [])[:100]:
+            try:
+                domain_results[d] = feed.lookup(d)
+            except Exception:
+                logger.warning("domain feed lookup failed for %s", d, exc_info=True)
+                domain_results[d] = []
     return templates.TemplateResponse(
         request,
         "report.html",
@@ -973,6 +1008,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             "relations": relations[:10],
             "pending": pending,
             "poll_interval": settings.scan_poll_interval_ms,
+            "domain_results": domain_results,
         },
     )
 

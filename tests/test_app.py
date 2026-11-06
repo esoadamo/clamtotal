@@ -32,7 +32,7 @@ def test_upload_returns_hash_and_report_renders(client):
     report = client.get(f"/ui/file/{sha256}")
     assert report.status_code == 200
     assert "clean.bin" in report.text
-    assert "0/1" in report.text
+    assert "0/2" in report.text  # ClamAV + domain feed engines
     assert "hxxps://example[.]org/malware-report" in report.text  # defanged in the UI
     assert 'href="https://example.org' not in report.text
 
@@ -41,7 +41,7 @@ def test_upload_eicar_is_detected(client):
     sha256, response = _upload(client, EICAR, "eicar.com")
     assert response.status_code == 202
     report = client.get(f"/ui/file/{sha256}")
-    assert "1/1" in report.text
+    assert "1/2" in report.text  # ClamAV + domain feed engines
     assert "Win.Test.EICAR_HDB-1" in report.text
 
 
