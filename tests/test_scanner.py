@@ -106,6 +106,39 @@ def test_clamd_fdpass_infected_and_error(monkeypatch, tmp_path):
         ClamdScanner().scan(b"x", path=p)
 
 
+class TimeoutSocket(FakeSocket):
+    def recv(self, n):
+        raise TimeoutError("timed out")
+
+    def sendmsg(self, msgs, cmsgs):
+        pass
+
+
+def test_clamd_scan_timeout_is_a_clear_error(monkeypatch, tmp_path):
+    # clamd still busy scanning a large sample -> per-recv timeout must surface as a
+    # clear ScannerUnavailableError (mentioning CLAMD_TIMEOUT), not a raw TimeoutError
+    p = tmp_path / "big.bin"
+    p.write_bytes(b"x" * 100)
+
+    # FILDES path (unix socket + stored file)
+    monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
+    fake = TimeoutSocket(b"")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
+    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+        ClamdScanner().scan(b"x" * 100, path=p)
+
+    # INSTREAM path (tcp, small data)
+    monkeypatch.setattr(settings, "clamd_socket", None)
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: TimeoutSocket(b""))
+    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+        ClamdScanner().scan(b"small")
+
+    # file-based SCAN path (tcp, data over stream_scan_max_size)
+    monkeypatch.setattr(settings, "stream_scan_max_size", 4)
+    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+        ClamdScanner().scan(b"this is larger than four bytes")
+
+
 def test_clamd_scan_routes_without_socket_or_path(monkeypatch):
     # no CLAMD_SOCKET / no path -> INSTREAM for small, file-based SCAN for large
     monkeypatch.setattr(settings, "clamd_socket", None)

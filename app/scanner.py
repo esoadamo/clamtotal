@@ -101,6 +101,24 @@ class ClamdScanner:
             return self._scan_file(data)
         return self._scan_stream(data)
 
+    def _recv_response(self, sock: socket.socket) -> bytes:
+        """Read until the NUL/newline terminator. A per-recv timeout means clamd is
+        still busy scanning (large sample) and has not answered yet — surface that as
+        a clear error instead of a raw TimeoutError."""
+        response = b""
+        try:
+            while b"\n" not in response and b"\x00" not in response:
+                part = sock.recv(4096)
+                if not part:
+                    break
+                response += part
+        except TimeoutError:
+            raise ScannerUnavailableError(
+                f"clamd did not answer within CLAMD_TIMEOUT={settings.clamd_timeout:.0f}s — "
+                "the sample is still being scanned; raise CLAMD_TIMEOUT if it is large"
+            ) from None
+        return response
+
     def _scan_fd(self, path: Path) -> ScanResult:
         """Scan via FILDES over the Unix socket: after the zFILDES command a second
         packet (one dummy byte) carries the fd in SCM_RIGHTS ancillary data, and clamd
@@ -114,12 +132,7 @@ class ClamdScanner:
                     [b"\0"],
                     [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack("i", fd))],
                 )
-                response = b""
-                while b"\n" not in response and b"\x00" not in response:
-                    part = sock.recv(4096)
-                    if not part:
-                        break
-                    response += part
+                response = self._recv_response(sock)
         finally:
             os.close(fd)
         text = response.decode(errors="replace").replace("\x00", "").strip()
@@ -151,12 +164,7 @@ class ClamdScanner:
             os.chmod(path, 0o644)  # mkstemp creates 0600; clamd must be able to read it
             with self._connect() as sock:
                 sock.sendall(f"zSCAN {path}\0".encode())
-                response = b""
-                while b"\n" not in response and b"\x00" not in response:
-                    part = sock.recv(4096)
-                    if not part:
-                        break
-                    response += part
+                response = self._recv_response(sock)
         finally:
             Path(path).unlink(missing_ok=True)
         text = response.decode(errors="replace").replace("\x00", "").strip()
@@ -185,13 +193,8 @@ class ClamdScanner:
                 chunk = data[offset : offset + settings.clamd_chunk_size]
                 sock.sendall(struct.pack(">I", len(chunk)) + chunk)
             sock.sendall(struct.pack(">I", 0))
-            response = b""
             # z-commands NUL-terminate responses ("stream: OK\0"), plain ones use \n
-            while b"\n" not in response and b"\x00" not in response:
-                part = sock.recv(4096)
-                if not part:
-                    break
-                response += part
+            response = self._recv_response(sock)
         # strip NUL terminators from z-command responses before parsing
         text = response.decode(errors="replace").replace("\x00", "").strip()
         if text.endswith("OK"):

@@ -144,6 +144,7 @@ Feed updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=f
 | `APP_VERSION` | build stamp | version shown in the page footer; the container image sets it at build time to `YYMMDD.hhmmss` UTC (`/app/.build-version`) |
 | `CLAM_MODE` | `auto` | `auto`, `daemon` (aliases `clamd`/`tcp`), or `cli` (clamscan); any other value fails startup |
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |
+| `CLAMD_TIMEOUT` | `600` | per-recv socket timeout for clamd answers; clamd can take minutes on a large sample before replying — a timeout surfaces as a clear 503 `clamd did not answer within CLAMD_TIMEOUT=...s` instead of a raw `TimeoutError` |
 | `CLAMD_SOCKET` | `/tmp/clamd.sock` in the container | Unix socket for clamd; when set, stored samples are scanned via `FILDES` (fd passed with `SCM_RIGHTS`), so no `StreamMaxLength` cap and no file-permission issues — multi-GB files work when `MAX_UPLOAD_SIZE` is raised |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |

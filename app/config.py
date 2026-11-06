@@ -37,7 +37,9 @@ class Settings(BaseSettings):
     clamd_host: str = "127.0.0.1"
     clamd_port: int = 3310
     clamd_socket: str | None = None
-    clamd_timeout: float = 120.0
+    # per-recv socket timeout; clamd may legitimately take minutes on a large sample
+    # before it sends anything, so keep this well above the expected scan time
+    clamd_timeout: float = 600.0
     clamd_chunk_size: int = 64 * 1024
     clamscan_path: str = "clamscan"
     clamscan_timeout: int = 600
