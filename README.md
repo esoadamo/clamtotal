@@ -37,8 +37,8 @@ Features (all fully offline, no login, no community features):
   scans asynchronously, or `200` with `cached: true` if the hash was already
   analyzed), `GET /api/v2/files/{hash}` (includes `status`: `pending`/`done`),
   `POST /api/v2/urls` + `GET /api/v2/urls/{id}` for URL/domain checks (synchronous
-  local blocklist lookup, verdict + categories), `/healthz` includes a `blocklists`
-  feed status
+  local blocklist lookup, verdict + categories); `/healthz` lists the blocklist feed
+  as a `blocklists` engine entry (rule count + last update)
 - VT-style UX flow: the browser hashes the file (SHA-256) and checks
   `GET /api/v2/files/{hash}` first — already-analyzed files go straight to the
   report; new files ask for confirmation, then upload with a progress bar plus

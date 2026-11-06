@@ -91,17 +91,9 @@ class UrlReport(BaseModel):
     last_analysis: str = Field(description="ISO-8601 UTC timestamp of the last check")
 
 
-class BlocklistHealth(BaseModel):
-    enabled: bool = Field(description="whether URL_BLOCKLIST_DIR is set")
-    entries: int | None = Field(description="imported blocklist entries, null when disabled")
-    updated_at: str | None = Field(
-        default=None, description="ISO 8601 UTC timestamp of the last blocklist update"
-    )
-
-
 class EngineHealth(BaseModel):
     name: str = Field(description="engine display name, e.g. 'ClamAV (clamd)'")
-    type: str = Field(description="'clamav' or 'yara'")
+    type: str = Field(description="'clamav', 'yara' or 'blocklists' (URL blocklist feed)")
     enabled: bool = Field(description="whether ENABLED_SCANNERS selects this engine")
     ready: bool = Field(description="whether the engine is currently reachable/loaded")
     version: str | None = Field(default=None, description="engine version string, if known")
@@ -115,9 +107,8 @@ class HealthResponse(BaseModel):
     status: str = Field(
         description="'ok' when at least one enabled engine is ready, else 'degraded'"
     )
-    engines: list[EngineHealth] = Field(default_factory=list)
-    blocklists: BlocklistHealth = Field(
-        description="URL/domain blocklist feed status (not a scan engine; does not affect 'status')"
+    engines: list[EngineHealth] = Field(
+        description="scan engines plus the URL blocklist feed (type 'blocklists')"
     )
 
 

@@ -1,6 +1,7 @@
 """URL/domain scanning: blocklist parsing/import, normalization, lookup, routes."""
 
 import base64
+import logging
 import threading
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from app.blocklists import (
 from app.config import settings
 from app.db import SessionLocal
 from app.models import BlocklistEntry, UrlScan
+from app.scanner import ScannerUnavailableError
 
 
 @pytest.fixture
@@ -245,6 +247,54 @@ def test_ensure_blocklists_loaded_branches(blocklist_dir, monkeypatch):
     assert bl._loaded_stamp == stamp_after
 
 
+def test_import_blocklists_falls_back_when_lock_not_obtainable(blocklist_dir, monkeypatch):
+    _seed_lists(blocklist_dir)
+
+    def boom(*args, **kwargs):
+        raise OSError("read-only fs")
+
+    monkeypatch.setattr(bl.fcntl, "flock", boom)
+    assert _import(blocklist_dir) == 4  # lock failed -> import anyway, without the lock
+    with SessionLocal() as db:
+        assert db.execute(select(func.count()).select_from(BlocklistEntry)).scalar() == 4
+
+
+def test_ensure_import_failure_is_logged_not_fatal(blocklist_dir, monkeypatch, caplog):
+    _seed_lists(blocklist_dir)
+    monkeypatch.setattr(bl, "_loaded_stamp", None)
+    monkeypatch.setattr(bl, "_import_thread", None)
+
+    def boom(db):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(bl, "import_blocklists", boom)
+    with caplog.at_level(logging.ERROR, logger="app.blocklists"):
+        bl.ensure_blocklists_loaded()
+        assert bl._import_thread is not None
+        bl._import_thread.join(timeout=30)
+    assert "url blocklist import failed" in caplog.text
+
+
+def test_healthz_blocklist_feed_alone_does_not_make_service_ok(client, blocklist_dir, monkeypatch):
+    import app.main as main_module
+    from app.scanner import get_yara_scanner
+
+    _seed_lists(blocklist_dir)
+    _import(blocklist_dir)
+
+    def boom():
+        raise ScannerUnavailableError("no backend")
+
+    monkeypatch.setattr(main_module, "get_scanner", boom)
+    monkeypatch.setattr(main_module, "enabled_scanners", lambda: {"clamav", "yara"})
+    monkeypatch.setattr(settings, "yara_rules_dir", "")  # no in-process yara engine
+    get_yara_scanner.cache_clear()
+    body = client.get("/healthz").json()
+    get_yara_scanner.cache_clear()
+    assert body["engines"][2]["type"] == "blocklists" and body["engines"][2]["ready"] is True
+    assert body["status"] == "degraded"  # feed ready, but no scan engine ready
+
+
 def test_blocklist_stats(blocklist_dir):
     with SessionLocal() as db:
         db.execute(bl.delete(BlocklistEntry))
@@ -398,17 +448,28 @@ def test_home_page_has_url_form(client):
     assert 'name="url"' in home
 
 
-def test_healthz_reports_blocklists(client, blocklist_dir, monkeypatch):
+def test_healthz_lists_blocklists_as_engine(client, blocklist_dir, monkeypatch):
     _seed_lists(blocklist_dir)
     _import(blocklist_dir)
     body = client.get("/healthz").json()
-    assert body["blocklists"]["enabled"] is True
-    assert body["blocklists"]["entries"] == 4
-    assert body["blocklists"]["updated_at"] is not None
-    # disabled when URL_BLOCKLIST_DIR is unset
+    bl_eng = body["engines"][2]
+    assert bl_eng == {
+        "name": "URL blocklists",
+        "type": "blocklists",
+        "enabled": True,
+        "ready": True,
+        "version": None,
+        "rules": 4,
+        "rules_updated_at": bl_eng["rules_updated_at"],
+    }
+    assert bl_eng["rules_updated_at"] is not None
+    # a ready blocklist feed alone must not make the service "ok" (uploads would 503)
     monkeypatch.setattr(settings, "url_blocklist_dir", "")
     body = client.get("/healthz").json()
-    assert body["blocklists"] == {"enabled": False, "entries": None, "updated_at": None}
+    bl_eng = body["engines"][2]
+    assert bl_eng["type"] == "blocklists" and bl_eng["enabled"] is False
+    assert bl_eng["ready"] is False and bl_eng["rules"] is None
+    assert bl_eng["rules_updated_at"] is None
 
 
 def test_url_scan_rate_limited(client, monkeypatch):

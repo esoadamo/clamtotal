@@ -246,12 +246,15 @@ def test_chunked_upload_rejects_bad_input(client, monkeypatch):
 def test_healthz(client):
     body = client.get("/healthz").json()
     assert body["status"] == "ok"
-    clam, yara_eng = body["engines"]
+    clam, yara_eng, bl_eng = body["engines"]
     assert clam["type"] == "clamav" and clam["enabled"] and clam["ready"]
     assert clam["name"] == "ClamAV (fake)" and clam["version"] == "ClamAV 1.0.0 (fake)"
     assert clam["rules"] is None and clam["rules_updated_at"] is None  # no CLAMAV_DB_DIR
     assert yara_eng["type"] == "yara" and yara_eng["enabled"] and not yara_eng["ready"]
     assert yara_eng["version"] and yara_eng["rules"] is None
+    # the URL blocklist feed is listed as an engine entry too (a feed, not a scan engine)
+    assert bl_eng["type"] == "blocklists" and bl_eng["enabled"]
+    assert bl_eng["ready"] == (bl_eng["rules"] > 0)  # order-independent vs other tests
 
 
 def test_healthz_clamav_down_is_degraded(client, monkeypatch):
@@ -281,7 +284,7 @@ def test_healthz_engines_disabled_via_enabled_scanners(client, monkeypatch, tmp_
     body = client.get("/healthz").json()
     get_yara_scanner.cache_clear()
     assert body["status"] == "ok"
-    clam, yara_eng = body["engines"]
+    clam, yara_eng, _bl_eng = body["engines"]
     assert clam == {
         "name": "ClamAV",
         "type": "clamav",

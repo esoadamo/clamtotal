@@ -65,7 +65,6 @@ from app.scanner import (
 )
 from app.schemas import (
     ApiScanResponse,
-    BlocklistHealth,
     ChunkUploadResponse,
     EngineHealth,
     ErrorResponse,
@@ -1272,12 +1271,36 @@ def healthz(db: Session = Depends(get_db)) -> HealthResponse:
                 rules_updated_at=None,
             )
         )
-    status = "ok" if any(e.enabled and e.ready for e in engines) else "degraded"
-    # URL blocklist feed status: informational only (not a scan engine, so it does
-    # not affect the ok/degraded computation above)
+    # the URL blocklist feed shows as an engine entry too; it is a data feed, not a
+    # scan engine, so it never affects the ok/degraded status (uploads would still 503)
     if settings.url_blocklist_dir:
         count, updated = blocklist_stats(db)
-        blocklists = BlocklistHealth(enabled=True, entries=count, updated_at=_iso_utc(updated))
+        engines.append(
+            EngineHealth(
+                name="URL blocklists",
+                type="blocklists",
+                enabled=True,
+                ready=count > 0,
+                version=None,
+                rules=count,
+                rules_updated_at=_iso_utc(updated),
+            )
+        )
     else:
-        blocklists = BlocklistHealth(enabled=False, entries=None, updated_at=None)
-    return HealthResponse(status=status, engines=engines, blocklists=blocklists)
+        engines.append(
+            EngineHealth(
+                name="URL blocklists",
+                type="blocklists",
+                enabled=False,
+                ready=False,
+                version=None,
+                rules=None,
+                rules_updated_at=None,
+            )
+        )
+    status = (
+        "ok"
+        if any(e.enabled and e.ready and e.type != "blocklists" for e in engines)
+        else "degraded"
+    )
+    return HealthResponse(status=status, engines=engines)

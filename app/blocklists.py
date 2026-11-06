@@ -11,6 +11,7 @@ thread when the stamp changes — same pattern as the YARA rules stamp.
 from __future__ import annotations
 
 import base64
+import fcntl
 import ipaddress
 import logging
 import re
@@ -183,10 +184,26 @@ def import_blocklists(db: Session) -> int:
                 if domain:
                     rows.append({"domain": domain, "source": source, "category": category})
     with _import_lock:
-        db.execute(delete(BlocklistEntry))
-        if rows:
-            db.execute(insert(BlocklistEntry), rows)
-        db.commit()
+        # cross-process lock (same pattern as the YARA compile lock): with uvicorn
+        # --workers N every worker spawns its own import thread on a stamp change, and
+        # concurrent multi-MB inserts would otherwise hit SQLite "database is locked"
+        lock = None
+        if blocklist_dir is not None:
+            try:
+                lock = open(blocklist_dir / ".import.lock", "w")
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            except OSError:
+                if lock is not None:
+                    lock.close()
+                lock = None  # read-only dir: import anyway, without the lock
+        try:
+            db.execute(delete(BlocklistEntry))
+            if rows:
+                db.execute(insert(BlocklistEntry), rows)
+            db.commit()
+        finally:
+            if lock is not None:
+                lock.close()
         _loaded_stamp = _stamp_value()
     logger.info("url blocklists loaded: %d entries from %s", len(rows), settings.url_blocklist_dir)
     return len(rows)
@@ -207,8 +224,11 @@ def ensure_blocklists_loaded() -> None:
             return
 
         def run() -> None:
-            with SessionLocal() as db:
-                import_blocklists(db)
+            try:
+                with SessionLocal() as db:
+                    import_blocklists(db)
+            except Exception:
+                logger.exception("url blocklist import failed; keeping previous entries")
 
         _import_thread = threading.Thread(target=run, daemon=True)
         _import_thread.start()
