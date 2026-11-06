@@ -4,6 +4,7 @@ import struct
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -142,6 +143,24 @@ def test_healthz_reports_yara_daemon(client, daemon, monkeypatch):
     yara_eng = body["engines"][1]
     assert yara_eng["name"] == "YARA (daemon)"
     assert yara_eng["enabled"] and yara_eng["ready"] and yara_eng["rules"] == 1
+
+
+def test_mem_info(monkeypatch):
+    from app.yara_daemon import _mem_info
+
+    rss, limit = _mem_info()
+    assert rss is not None and rss > 0  # real /proc on Linux
+
+    def no_proc(self):
+        raise OSError("no proc")
+
+    monkeypatch.setattr(Path, "read_text", no_proc)
+    assert _mem_info() == (None, None)
+
+    monkeypatch.setattr(
+        Path, "read_text", lambda self: "VmRSS:\t 102400 kB\n" if "status" in str(self) else "max"
+    )
+    assert _mem_info() == (100.0, "max")
 
 
 def test_main_parses_args(monkeypatch, tmp_path):

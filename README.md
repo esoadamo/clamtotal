@@ -133,6 +133,8 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `LOG_LEVEL` | `info` | log level for the app logger and (in the container, via the entrypoint) uvicorn; `debug` shows worker lifecycle/restart reasons, scan start/done/failure logs, and native tracebacks on hard crashes (faulthandler) |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
 | `YARA_SOCKET` | unset (container: `/tmp/yara.sock`) | Unix socket of the YARA scan daemon (`app/yara_daemon.py`, started by the container entrypoint); workers query it over the socket instead of each compiling the rule set into their own RAM. Unset = in-process engine from `YARA_RULES_DIR` (local dev) |
+
+Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon compiles the rule set once; with all default third-party YARA sources that is several GB. If the daemon or workers get OOM-killed (`Killed`/`Child process died` with no traceback), raise the container memory limit (compose `mem_limit: 8g`) or trim `container/yara-rules-sources.conf` (signature-base is disabled by default for this reason). |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |

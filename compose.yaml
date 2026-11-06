@@ -26,6 +26,11 @@ services:
     environment:
       # set to "false" for fully airgapped operation (bake signatures into the image)
       CLAM_AUTOUPDATE: "true"
+    # clamd holds the signature DB in RAM and the yara daemon compiles the rule set
+    # once — with all default third-party YARA sources that needs several GB total.
+    # If workers/daemon get OOM-killed ("Child process died" with no traceback),
+    # raise this or trim container/yara-rules-sources.conf.
+    # mem_limit: 8g
     restart: unless-stopped
 
 volumes:

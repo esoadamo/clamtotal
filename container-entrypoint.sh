@@ -95,7 +95,10 @@ EOF
 if [ -n "${YARA_RULES_DIR:-}" ]; then
   /app/.venv/bin/python -m app.yara_daemon \
     --rules "$YARA_RULES_DIR" --socket "${YARA_SOCKET:-/tmp/yara.sock}" &
-  python - <<'EOF'
+  # Non-fatal: if the daemon dies (e.g. OOM-killed while compiling a huge rule set
+  # inside a small memory limit), the service still runs with ClamAV only and
+  # /healthz shows the yara engine as not ready.
+  if ! python - <<'EOF'
 import os, socket, sys, time
 
 sock_path = os.environ.get("YARA_SOCKET", "/tmp/yara.sock")
@@ -111,6 +114,9 @@ for _ in range(60):
     time.sleep(1)
 sys.exit(f"yara daemon did not answer PING on {sock_path}")
 EOF
+  then
+    echo "[bootstrap] WARNING: yara daemon did not answer PING on ${YARA_SOCKET:-/tmp/yara.sock} — continuing WITHOUT the YARA engine (/healthz will show it not ready). It was likely OOM-killed while compiling the rule set: raise the container memory limit (compose mem_limit, e.g. 8g) or trim /etc/yara-rules-sources.conf." >&2
+  fi
 fi
 
 # Apply database migrations (creates the tables in /data/clamtotal.db on first start).

@@ -187,13 +187,14 @@ def test_yara_rules_sources_are_license_permitted():
         for line in conf.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    assert len(entries) >= 3
     names = set()
     for name, url, branch, subdir in entries:
         assert name and url.startswith("https://github.com/") and branch and subdir
         names.add(name)
     # verified permissive licenses: MIT (ReversingLabs), DRL 1.1 (signature-base), BSD-2 (ditekshen)
-    assert {"reversinglabs", "signature-base", "ditekshen"} <= names
+    # signature-base is the biggest memory consumer, so it ships as a commented opt-in
+    assert {"reversinglabs", "ditekshen"} <= names
+    assert "signature-base|https://github.com/Neo23x0/signature-base.git" in conf
     low = conf.lower()
     assert "mit" in low and "bsd" in low and "drl" in low
     # no Elastic License 2.0 (SaaS restriction) or other non-permissive ACTIVE sources

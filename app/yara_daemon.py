@@ -26,6 +26,8 @@ import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 
 from app.scanner import YaraScanner
 
+logger = logging.getLogger(__name__)
+
 CHUNK_SIZE = 64 * 1024
 
 
@@ -96,10 +98,41 @@ def handle_conn(conn: socket.socket, scanner: YaraScanner) -> None:
         pass  # client went away mid-command
 
 
+def _mem_info() -> tuple[float | None, str | None]:
+    """(RSS in MB, cgroup memory limit as text) for startup logging — the compile of
+    a large rule set is the main memory spike; if the daemon gets SIGKILLed during it,
+    the kernel OOM killer hit the cgroup limit."""
+    rss = None
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                rss = int(line.split()[1]) / 1024
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    limit = None
+    for p in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            limit = Path(p).read_text().strip()
+            break
+        except OSError:
+            continue
+    return rss, limit
+
+
 def serve(rules_dir: str, socket_path: str) -> None:
     """Listen on the Unix socket forever, one thread per connection (yara releases
     the GIL during match(), so scans overlap)."""
+    rss, limit = _mem_info()
+    logger.info(
+        "yara daemon starting: rules=%s rss_before=%.0fMB cgroup_limit=%s",
+        rules_dir,
+        rss or 0,
+        limit or "?",
+    )
     scanner = YaraScanner(rules_dir)
+    rss, _ = _mem_info()
+    logger.info("yara daemon ready on %s: rss_after_compile=%.0fMB", socket_path, rss or 0)
     Path(socket_path).unlink(missing_ok=True)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(socket_path)
