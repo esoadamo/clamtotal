@@ -114,6 +114,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | `sqlite:///./clamtotal.db` | SQLAlchemy URL |
+| `UVICORN_WORKERS` | `min(nproc*2, 4)` in the container | uvicorn worker count; each worker loads the full YARA rule set and clamd holds the signature DB in RAM, so on small VMs too many workers get OOM-killed (workers die with no traceback — check the `[entrypoint] memory:` line and per-worker `rss=` logs) |
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
 | `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
 | `STREAM_SCAN_MAX_SIZE` | `536870912` (= `MAX_UPLOAD_SIZE`) | INSTREAM size cap for clamd; the container syncs clamd's `StreamMaxLength` to this value, so all uploads scan via INSTREAM and clamd never needs to read app-owned files (avoids `Access denied` on the upload volume). Lower it to scan larger files via clamd's file-based SCAN |

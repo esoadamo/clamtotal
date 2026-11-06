@@ -325,6 +325,22 @@ def test_run_scan_file_logs_read_failure(client, monkeypatch, caplog, tmp_path):
     assert "scan of stored file failed" in caplog.text
 
 
+def test_rss_mb(monkeypatch):
+    assert main_module._rss_mb() is not None  # real /proc on Linux
+
+    def boom(self):
+        raise OSError("no proc")
+
+    monkeypatch.setattr(main_module.Path, "read_text", boom)
+    assert main_module._rss_mb() is None
+
+    monkeypatch.setattr(main_module.Path, "read_text", lambda self: "Name:\tpython\n")
+    assert main_module._rss_mb() is None  # no VmRSS line
+
+    monkeypatch.setattr(main_module.Path, "read_text", lambda self: "VmRSS:\t 204800 kB\n")
+    assert main_module._rss_mb() == 200.0
+
+
 def test_upload_twice_second_is_cached_200(client):
     content = b"cached async upload"
     first = client.post("/file/upload", files={"file": ("c.bin", content)})

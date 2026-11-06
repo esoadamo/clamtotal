@@ -40,6 +40,17 @@ def test_scripts_resolve_fangfrisch_from_venv():
     assert "/app/.venv/bin/fangfrisch" in s
 
 
+def test_entrypoint_worker_count_configurable_capped_and_memory_logged():
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    # worker count overridable and capped: each worker loads the full YARA rule set,
+    # so uncapped nproc*2 workers OOM-kill each other on small VMs
+    assert "UVICORN_WORKERS" in ep
+    assert '[ "$workers" -gt 4 ] && workers=4' in ep
+    # memory visibility at startup so OOM kills ("Child process died", no traceback)
+    # can be confirmed from the container logs
+    assert "memory.max" in ep and "MemTotal" in ep
+
+
 def test_signature_scripts_fail_gracefully_offline():
     # no-DNS environments: keep existing signatures, print one line, no stack trace
     s = (ROOT / "scripts/update-signatures.sh").read_text()

@@ -93,13 +93,18 @@ EOF
 # runtime; all packages are already installed in the image at build time.
 /app/.venv/bin/alembic upgrade head
 
-# 2 workers per CPU core; trust proxy headers so it works behind a Cloudflare Tunnel.
-# LOG_LEVEL=debug shows worker lifecycle + reload/restart reasons in the container logs
-# (a worker that dies without a traceback is usually a hard crash — the app enables
-# faulthandler, so SIGSEGV & friends dump a native traceback to stderr — or an OOM
-# kill, which only shows up in the kernel log / `podman events`).
-workers=$(( $(nproc) * 2 ))
+# 2 workers per CPU core, capped at 4 (override with UVICORN_WORKERS): every worker
+# loads the full YARA rule set on first scan, and clamd holds the whole signature DB
+# in RAM — on a small VM, 8+ workers + clamd exceed the memory and the kernel OOM-
+# killer SIGKILLs workers ("Child process died" with NO faulthandler traceback).
+# Trust proxy headers so it works behind a Cloudflare Tunnel.
+# LOG_LEVEL=debug shows worker lifecycle + restart reasons in the container logs.
+workers="${UVICORN_WORKERS:-$(( $(nproc) * 2 ))}"
+[ "$workers" -gt 4 ] && workers=4
 echo "[entrypoint] starting uvicorn: workers=$workers log_level=${LOG_LEVEL:-info}"
+# memory visibility: cgroup v2 then v1 limit/current, plus host MemTotal — a worker
+# dying with no traceback right after startup is the OOM killer; confirm against these
+echo "[entrypoint] memory: cgroup_limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo '?') cgroup_current=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo '?') host_MemTotal=$(awk '/^MemTotal/{print $2" kB"}' /proc/meminfo)"
 exec /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
   --workers "$workers" --proxy-headers --forwarded-allow-ips='*' \
   --log-level "${LOG_LEVEL:-info}"

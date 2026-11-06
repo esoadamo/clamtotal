@@ -1,6 +1,7 @@
 import faulthandler
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -124,10 +125,27 @@ def _probe_scanner_at_startup() -> None:
         )
 
 
+def _rss_mb() -> float | None:
+    """Worker RSS from /proc/self/status (Linux containers), None elsewhere."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     _probe_scanner_at_startup()
     _recover_pending_scans()
+    rss = _rss_mb()
+    logger.info(
+        "worker up: pid=%d rss=%s",
+        os.getpid(),
+        f"{rss:.0f} MB" if rss is not None else "unknown",
+    )
 
     def loop() -> None:
         while True:
