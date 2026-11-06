@@ -281,6 +281,10 @@ def yara_rss_budget_mb() -> float | None:
     return max((limit - current) / 1e6 - 512.0, 0.0)
 
 
+# rule groups with less source than this compile into ONE combined object (bounded
+# spike); bigger groups compile per-file with an RSS budget check before each file
+_COMBINED_MAX_SRC_BYTES = 2 * 1024 * 1024
+
 _RULE_DECL = re.compile(r"(?m)^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z_]\w*")
 
 
@@ -336,30 +340,50 @@ class YaraScanner:
         rules_count = 0
         for key in sorted(groups):
             group_files = groups[key]
-            rss = rss_mb()
-            if budget is not None and rss is not None and rss > budget:
-                logger.warning(
-                    "yara: skipping rule group %r (%d files): RSS %.0f MB already over "
-                    "budget %.0f MB (raise the container memory limit or YARA_RSS_BUDGET_MB)",
-                    key,
-                    len(group_files),
-                    rss,
-                    budget,
-                )
-                continue
-            try:
-                rules.append(
-                    yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(group_files)})
-                )
-                rules_count += sum(_count_rules(f) for f in group_files)
-            except yara.Error:
-                # one broken file must not kill the group: per-file fallback
-                for f in group_files:
-                    try:
-                        rules.append(yara.compile(filepath=str(f)))
-                        rules_count += _count_rules(f)
-                    except yara.Error:
-                        continue
+            src_bytes = sum(f.stat().st_size for f in group_files)
+            if src_bytes < _COMBINED_MAX_SRC_BYTES:
+                # small group: one combined compile is a bounded spike (~tens of MB)
+                rss = rss_mb()
+                if budget is not None and rss is not None and rss > budget:
+                    logger.warning(
+                        "yara: skipping rule group %r (%d files): RSS %.0f MB already over "
+                        "budget %.0f MB (raise the container memory limit or YARA_RSS_BUDGET_MB)",
+                        key,
+                        len(group_files),
+                        rss,
+                        budget,
+                    )
+                    continue
+                try:
+                    rules.append(
+                        yara.compile(
+                            filepaths={f"ns{i}": str(f) for i, f in enumerate(group_files)}
+                        )
+                    )
+                    rules_count += sum(_count_rules(f) for f in group_files)
+                    continue
+                except yara.Error:
+                    pass  # one broken file must not kill the group: per-file fallback
+            # big group (or failed combined compile): compile file by file, checking the
+            # RSS budget before each file, so a huge set is cut off at the budget instead
+            # of spiking past the cgroup limit in a single combined compile
+            for f in group_files:
+                rss = rss_mb()
+                if budget is not None and rss is not None and rss > budget:
+                    logger.warning(
+                        "yara: skipping rest of rule group %r (from %s): RSS %.0f MB over "
+                        "budget %.0f MB (raise the container memory limit or YARA_RSS_BUDGET_MB)",
+                        key,
+                        f.name,
+                        rss,
+                        budget,
+                    )
+                    break
+                try:
+                    rules.append(yara.compile(filepath=str(f)))
+                    rules_count += _count_rules(f)
+                except yara.Error:
+                    continue
         try:
             stamp = self._stamp_path.stat().st_mtime_ns
         except OSError:

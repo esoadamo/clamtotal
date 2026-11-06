@@ -42,9 +42,14 @@ fi
 # Third-party YARA rule sets for the local YARA engine (license-permitted sources
 # from /etc/yara-rules-sources.conf -> /rules/third_party). Non-fatal: the bundled
 # rules in /rules always work. Skipped when CLAM_AUTOUPDATE=false (airgapped).
-if [ "${CLAM_AUTOUPDATE:-true}" = "true" ] && [ ! -d /rules/third_party ]; then
-  echo "[bootstrap] no third-party YARA rules in /rules/third_party - downloading..."
-  update-yara-rules.sh || echo "[bootstrap] yara rule download failed (offline?) - bundled rules still active"
+if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
+  # ALWAYS prune at start: the volume persists rule sets from earlier configs, and a
+  # set disabled in the sources conf must stop being compiled or it OOMs the daemon
+  update-yara-rules.sh --prune-only || true
+  if [ ! -d /rules/third_party ]; then
+    echo "[bootstrap] no third-party YARA rules in /rules/third_party - downloading..."
+    update-yara-rules.sh || echo "[bootstrap] yara rule download failed (offline?) - bundled rules still active"
+  fi
 fi
 
 # Periodic background autoupdater (freshclam + unofficial DBs + third-party YARA rules).

@@ -738,6 +738,24 @@ def test_yara_scanner_skips_rule_groups_over_rss_budget(tmp_path, monkeypatch, c
     assert scanner.scan(b"x") == ["RA"]
 
 
+def test_yara_scanner_big_group_compiles_per_file_with_budget_cutoff(tmp_path, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(scanner_module, "_COMBINED_MAX_SRC_BYTES", 0)  # force per-file path
+    (tmp_path / "g").mkdir()
+    (tmp_path / "g" / "a.yar").write_text("rule RA { condition: true }")
+    (tmp_path / "g" / "b.yar").write_text("rule RB { condition: true }")
+    (tmp_path / "g" / "c.yar").write_text("rule RC { condition: true }")
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", 100)
+    rss_values = iter([10.0, 10.0, 500.0])  # third file's check exceeds the budget
+    monkeypatch.setattr(scanner_module, "rss_mb", lambda: next(rss_values))
+    with caplog.at_level(logging.WARNING):
+        scanner = YaraScanner(str(tmp_path))
+    assert "skipping rest of rule group" in caplog.text
+    assert scanner.rules_count == 2  # a + b compiled, c cut off at the budget
+    assert sorted(scanner.scan(b"x")) == ["RA", "RB"]
+
+
 def test_yara_scanner_rule_stats(tmp_path):
     (tmp_path / "a.yar").write_text(
         "rule R1 { condition: true }\nprivate rule R2 { condition: true }\n"

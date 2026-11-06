@@ -17,6 +17,11 @@
 # Failures are non-fatal: existing rules are kept (offline tolerance).
 set -e
 
+# --prune-only: skip all downloading, just drop rule sets whose source is no longer
+# active in the conf (used at every container start — the volume persists them)
+PRUNE_ONLY=0
+[ "${1:-}" = "--prune-only" ] && PRUNE_ONLY=1
+
 RULES_DIR="${YARA_RULES_DIR:-/rules}"
 SOURCES_CONF="${YARA_RULES_SOURCES:-/etc/yara-rules-sources.conf}"
 STAMP="$RULES_DIR/.rules-stamp"
@@ -37,6 +42,7 @@ fi
 
 mkdir -p "$TARGET"
 updated=0
+if [ "$PRUNE_ONLY" = "0" ]; then
 while IFS='|' read -r name url branch subdir || [ -n "$name" ]; do
   case "$name" in '' | \#*) continue ;; esac
   [ -n "$url" ] || continue
@@ -87,6 +93,7 @@ while IFS='|' read -r name url branch subdir || [ -n "$name" ]; do
   updated=1
   rm -rf "$tmp"
 done < "$SOURCES_CONF"
+fi
 
 # prune third_party sets whose source is no longer active in the conf (e.g. disabled
 # for memory reasons): their rules were downloaded into the persistent volume earlier
