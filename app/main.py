@@ -1,3 +1,4 @@
+import faulthandler
 import json
 import logging
 import re
@@ -67,24 +68,44 @@ from app.schemas import (
     UploadResponse,
 )
 
+logger = logging.getLogger("app")
+# uvicorn only configures its own loggers, so without a handler the app's INFO
+# records would be dropped (root has no handlers); propagate is kept so tests'
+# caplog still captures via the root logger
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+
+# dump a native traceback to stderr on hard crashes (SIGSEGV etc.) so a dying
+# worker leaves evidence in the container logs instead of just "Child process died"
+faulthandler.enable()
+
 
 def _recover_pending_scans() -> None:
     """Startup recovery: scans left in 'pending' by a restart are re-run if the
     stored sample still exists, or their DB row is deleted if it was pruned."""
     with SessionLocal() as db:
         pending = db.execute(select(Scan).where(Scan.status == "pending")).scalars().all()
+        rerun = 0
         for scan in pending:
             stored = Path(settings.upload_dir) / scan.sha256
             if stored.exists():
+                rerun += 1
                 threading.Thread(
                     target=_run_scan_file, args=(stored, scan.file_name), daemon=True
                 ).start()
             else:
                 db.delete(scan)
         db.commit()
-
-
-logger = logging.getLogger(__name__)
+    if pending:
+        logger.info(
+            "startup recovery: %d pending scan(s), %d re-run, %d dropped",
+            len(pending),
+            rerun,
+            len(pending) - rerun,
+        )
 
 
 def _probe_scanner_at_startup() -> None:
@@ -93,9 +114,14 @@ def _probe_scanner_at_startup() -> None:
     inside an upload request (a reloader restart or proxy timeout in that window
     surfaces as a 502). Later requests then fail fast with 503 while it is down."""
     try:
-        get_scanner()
+        scanner = get_scanner()
     except ScannerUnavailableError as exc:
         logger.warning("ClamAV backend unavailable at startup: %s", exc)
+    else:
+        logger.info(
+            "ClamAV backend at startup: %s",
+            scanner.engine if scanner is not None else "disabled via ENABLED_SCANNERS",
+        )
 
 
 @asynccontextmanager
@@ -473,9 +499,23 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
 
 
 def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
-    """Background task: scan with all engines and mark the row done."""
-    with SessionLocal() as db:
-        scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True, path=path)
+    """Background task: scan with all engines and mark the row done. Never raises:
+    a failed scan is logged (with traceback) and the row stays 'pending' for the
+    next startup recovery, instead of killing the worker thread silently."""
+    logger.info("scan started: %s (%d bytes)", file_name, len(data))
+    try:
+        with SessionLocal() as db:
+            scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True, path=path)
+    except Exception:
+        logger.exception("scan failed: %s", file_name)
+        return
+    logger.info(
+        "scan done: %s (%s) verdict=%s signature=%s",
+        scan.sha256,
+        file_name,
+        scan.verdict,
+        scan.signature,
+    )
     if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
         (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
 
@@ -483,7 +523,10 @@ def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
 def _run_scan_file(path: Path, file_name: str) -> None:
     """Background scan of an already-stored sample: the file is read once here, in the
     background, instead of holding the whole upload in the request's memory."""
-    _run_scan(path.read_bytes(), file_name, path=path)
+    try:
+        _run_scan(path.read_bytes(), file_name, path=path)
+    except Exception:
+        logger.exception("scan of stored file failed: %s", path)
 
 
 def _enqueue_scan(

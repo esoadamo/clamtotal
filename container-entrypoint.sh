@@ -93,7 +93,13 @@ EOF
 # runtime; all packages are already installed in the image at build time.
 /app/.venv/bin/alembic upgrade head
 
-# 2 workers per CPU core; trust proxy headers so it works behind a Cloudflare Tunnel
+# 2 workers per CPU core; trust proxy headers so it works behind a Cloudflare Tunnel.
+# LOG_LEVEL=debug shows worker lifecycle + reload/restart reasons in the container logs
+# (a worker that dies without a traceback is usually a hard crash — the app enables
+# faulthandler, so SIGSEGV & friends dump a native traceback to stderr — or an OOM
+# kill, which only shows up in the kernel log / `podman events`).
 workers=$(( $(nproc) * 2 ))
+echo "[entrypoint] starting uvicorn: workers=$workers log_level=${LOG_LEVEL:-info}"
 exec /app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-  --workers "$workers" --proxy-headers --forwarded-allow-ips='*'
+  --workers "$workers" --proxy-headers --forwarded-allow-ips='*' \
+  --log-level "${LOG_LEVEL:-info}"

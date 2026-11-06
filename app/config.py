@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # shown in the page footer; the container sets it at BUILD time (UTC YYMMDD.hhmmss)
     app_version: str = ""
 
+    # log level for the app logger and (in the container, via the entrypoint) uvicorn
+    log_level: str = "info"
+
     # auto | daemon | cli — which ClamAV backend to use ("clamd"/"tcp" accepted as alias of
     # "daemon"); any other value fails startup with an error instead of silently guessing
     clam_mode: str = "auto"

@@ -128,6 +128,7 @@ it ships with a commented YARA Forge opt-in whose mixed licenses you must accept
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |
 | `ENABLED_SCANNERS` | `clamav,yara` | comma-separated list of enabled scan engines: `clamav` (clamd/clamscan) and/or `yara` (local rules); any other value fails with an error |
 | `CLAMAV_DB_DIR` | unset (container: `/var/lib/clamav`) | ClamAV signature database directory; `/healthz` reports the signature count and last update time from it |
+| `LOG_LEVEL` | `info` | log level for the app logger and (in the container, via the entrypoint) uvicorn; `debug` shows worker lifecycle/restart reasons, scan start/done/failure logs, and native tracebacks on hard crashes (faulthandler) |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |

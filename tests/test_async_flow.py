@@ -300,6 +300,31 @@ def test_startup_probe_quiet_when_backend_ok(caplog):
     assert "unavailable" not in caplog.text
 
 
+def test_run_scan_logs_failure_instead_of_raising(client, monkeypatch, caplog):
+    def broken(*args, **kwargs):
+        raise RuntimeError("scan exploded")
+
+    monkeypatch.setattr(main_module, "_scan_and_store", broken)
+    with caplog.at_level(logging.INFO):
+        main_module._run_scan(b"data", "x.bin")  # must not raise in the background task
+    assert "scan started: x.bin" in caplog.text
+    assert "scan failed: x.bin" in caplog.text
+    assert "scan exploded" in caplog.text
+
+
+def test_run_scan_file_logs_read_failure(client, monkeypatch, caplog, tmp_path):
+    p = tmp_path / "gone.bin"
+    p.write_bytes(b"x")
+
+    def unreadable(self):
+        raise OSError("gone")
+
+    monkeypatch.setattr(main_module.Path, "read_bytes", unreadable)
+    with caplog.at_level(logging.INFO):
+        main_module._run_scan_file(p, "gone.bin")
+    assert "scan of stored file failed" in caplog.text
+
+
 def test_upload_twice_second_is_cached_200(client):
     content = b"cached async upload"
     first = client.post("/file/upload", files={"file": ("c.bin", content)})
