@@ -170,11 +170,12 @@
     {% set iocs = scan.iocs or {} %}
     {% if scan.urls %}
     <h2 class="section-title">URLs ({{ scan.urls | length }})</h2>
-    <ul class="ioc mono">{% for url in scan.urls %}<li>{{ url | defang }}</li>{% endfor %}</ul>
+    {# each URL/domain links to its own scan report (checked against the domain feed) #}
+    <ul class="ioc mono">{% for url in scan.urls %}<li><a href="/ui/url/lookup?url={{ url | urlencode }}">{{ url | defang }}</a></li>{% endfor %}</ul>
     {% endif %}
     {% if iocs.domains %}
     <h2 class="section-title">Domains ({{ iocs.domains | length }})</h2>
-    <ul class="ioc mono">{% for d in iocs.domains %}<li>{{ d | defang }}{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</li>{% endfor %}</ul>
+    <ul class="ioc mono">{% for d in iocs.domains %}<li><a href="/ui/url/lookup?url={{ d | urlencode }}">{{ d | defang }}</a>{% if d in (iocs.punycode_domains or []) %} <span class="flag">(punycode/IDN)</span>{% endif %}</li>{% endfor %}</ul>
     {% endif %}
     {% if iocs.ips %}
     <h2 class="section-title">Contacted IP addresses ({{ iocs.ips | length }})</h2>

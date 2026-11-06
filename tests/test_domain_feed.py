@@ -2,8 +2,10 @@
 DB, normalization, lookup, routes, and the healthz feed engine entry."""
 
 import base64
+import hashlib
 import logging
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -359,6 +361,34 @@ def test_ui_url_lookup_and_report_pages(client, feed_dir, monkeypatch):
     get_domain_feed.cache_clear()
 
 
+def test_url_report_has_file_report_ui_and_relations(client, feed_dir):
+    _seed(feed_dir)
+    get_domain_feed.cache_clear()
+    # a file scan that contains the URL/domain -> shows up in the URL report relations
+    content = b"see http://www.evil-example.com/payload and evil-example.com here"
+    client.post("/file/upload", files={"file": ("evil.bin", content)})
+    sha = hashlib.sha256(content).hexdigest()
+    for _ in range(30):
+        if client.get(f"/api/v2/files/{sha}").json()["status"] == "done":
+            break
+        time.sleep(0.2)
+    r = client.get("/ui/url/lookup", params={"url": "www.evil-example.com"}, follow_redirects=False)
+    assert r.status_code == 303
+    page = client.get(r.headers["location"]).text
+    # same UI as the file report: header card, detection ring, tabbed card
+    assert 'class="tabs"' in page
+    assert 'data-tab="detection"' in page and 'data-tab="details"' in page
+    assert "det-widget" in page and "ring-num" in page
+    assert 'id="detection-engines"' in page
+    assert "malicious" in page and "hagezi-tif" in page and "malware" in page
+    # relations tab links back to the file containing this domain
+    assert 'data-tab="relations"' in page
+    assert "evil.bin" in page and f"/ui/file/{sha}" in page
+    # and vice versa: the file report links the URL to this scan
+    file_page = client.get(f"/ui/file/{sha}").text
+    assert "/ui/url/lookup?url=http%3A//www.evil-example.com/payload" in file_page
+
+
 def test_search_shows_url_card_for_domains(client, feed_dir):
     _seed(feed_dir)
     get_domain_feed.cache_clear()
@@ -395,13 +425,15 @@ def test_search_shows_url_card_for_domains(client, feed_dir):
     assert r.status_code == 303 and r.headers["location"] == f"/ui/file/{sha}"
 
 
-def test_home_page_has_url_form_without_api_pointer(client):
+def test_home_page_has_url_form_without_internals(client):
     home = client.get("/ui/").text
     assert 'id="url-form"' in home
     assert 'action="/ui/url/lookup"' in home
     assert 'name="url"' in home
-    assert "domain feed" in home
+    # no feed/healthz/API internals shown to users on the home page
+    assert "domain feed" not in home.lower()
     assert "/healthz" not in home
+    assert "home-api-bar" not in home
 
 
 def test_healthz_lists_domain_feed_as_engine(client, feed_dir, monkeypatch):

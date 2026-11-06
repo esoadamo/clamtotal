@@ -1204,10 +1204,36 @@ def url_report(request: Request, url_id: str, db: Session = Depends(get_db)) -> 
         )
     feed = get_domain_feed()
     feed_count = feed.stats()[0] if feed is not None else 0
+    # relations: analyzed files whose extracted URLs/IOCs mention this host
+    relations: list[tuple[Scan, list[str]]] = []
+    if scan.host:
+        like = f"%{scan.host}%"  # host labels are [a-z0-9.-], no LIKE wildcards possible
+        for other in (
+            db.execute(
+                select(Scan)
+                .where(
+                    or_(
+                        Scan.urls.cast(String).ilike(like),
+                        Scan.iocs.cast(String).ilike(like),
+                    )
+                )
+                .order_by(Scan.scanned_at.desc())
+                .limit(20)
+            )
+            .scalars()
+            .all()
+        ):
+            relations.append((other, [scan.host]))
+    matches = scan.matches or []
     return templates.TemplateResponse(
         request,
         "url_report.html",
-        {"scan": scan, "feed_count": feed_count},
+        {
+            "scan": scan,
+            "feed_count": feed_count,
+            "relations": relations[:10],
+            "categories": sorted({m["category"] for m in matches}),
+        },
     )
 
 

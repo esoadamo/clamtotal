@@ -155,7 +155,11 @@ def test_done_report_contract(client):
     # defanged, non-clickable indicators
     assert "hxxp://evil-example[.]com/path" in page.text
     assert 'href="http://evil-example.com/path"' not in page.text
-    assert "<a " not in page.text.split('id="tab-network"')[1].split("</section>")[0]
+    # indicators stay defanged as text, but link LOCALLY to their own URL scan report
+    network = page.text.split('id="tab-network"')[1].split("</section>")[0]
+    assert 'href="http' not in network  # never a clickable external link
+    assert 'href="/ui/url/lookup?url=' in network  # ...but clickable to the scan
+    assert "url=http%3A//evil-example.com/path" in network
     # a finished report carries no polling hooks: the page must not reload itself
     assert 'id="scan-progress"' not in page.text
     assert "data-sha=" not in page.text
@@ -171,16 +175,16 @@ def test_home_layout_contract(client):
         assert panel in home, panel
     # the upload form still lives in the FILE panel with the full JS contract
     assert 'id="upload-form"' in home and 'action="/file/upload"' in home
-    # URL tab keeps the URL form contract and must not point users at the API/healthz
+    # URL tab keeps the URL form contract; no feed/API internals shown to users
     assert 'id="url-form"' in home and 'action="/ui/url/lookup"' in home
-    assert "domain feed" in home
-    assert "/healthz" not in home.split('id="tab-url"')[1].split("</section>")[0]
-    # ToS + privacy notice under the widget and the API bar below it
+    assert "domain feed" not in home.lower()
+    assert "/healthz" not in home
+    # ToS + privacy notice under the widget; no "automate submissions" API box on the home page
     assert "home-notice" in home
     assert 'href="/ui/terms"' in home and "Terms of Service" in home
     assert 'href="/ui/privacy"' in home and "Privacy Notice" in home
     assert "not responsible for the contents of your submission" in home
-    assert "home-api-bar" in home and 'href="/docs"' in home
+    assert "home-api-bar" not in home and "automate submissions" not in home
     # warm friendly theme (teal on warm paper), not the dark VT palette
     assert "--bg: #f7f5f0" in home and "--brand: #0f766e" in home
     assert "#1a1a2e" not in home
