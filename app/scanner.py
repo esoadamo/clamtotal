@@ -252,6 +252,35 @@ class ClamscanScanner:
         return ScanResult("clean", None, self.engine, out.strip())
 
 
+def rss_mb() -> float | None:
+    """Process RSS in MB from /proc/self/status (Linux), None elsewhere."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def yara_rss_budget_mb() -> float | None:
+    """RSS budget (MB) for the compiled YARA rule set. YARA_RULES_BUDGET_MB: 0 = auto
+    (cgroup memory limit minus current usage minus a 512 MB reserve for clamd and
+    in-flight scans), negative = unlimited, positive = explicit MB. None (unlimited)
+    when no cgroup v2 limit is set. Lets the daemon skip rule sets it cannot afford
+    instead of being OOM-killed mid-compile."""
+    if settings.yara_rss_budget_mb > 0:
+        return float(settings.yara_rss_budget_mb)
+    if settings.yara_rss_budget_mb < 0:
+        return None
+    try:
+        limit = int(Path("/sys/fs/cgroup/memory.max").read_text().strip())
+        current = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
+    except (OSError, ValueError):
+        return None  # "max" or no cgroup v2 -> unlimited
+    return max((limit - current) / 1e6 - 512.0, 0.0)
+
+
 _RULE_DECL = re.compile(r"(?m)^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z_]\w*")
 
 
@@ -283,8 +312,7 @@ class YaraScanner:
         self._rules_dir = rules_dir
         self._stamp_path = Path(rules_dir) / ".rules-stamp"
         self._lock = threading.Lock()
-        self._combined = None  # single yara.Rules compiled from all files, when possible
-        self._per_file: list = []  # per-file compiled rules (fallback)
+        self._rules: list = []  # one compiled yara.Rules per source group
         self._stamp: int | None = None
         self._rules_count = 0
         self._rules_updated: float | None = None
@@ -297,17 +325,38 @@ class YaraScanner:
             for p in Path(self._rules_dir).glob("**/*")
             if p.suffix in (".yar", ".yara") and p.is_file()
         )
-        combined = None
-        per_file: list = []
+        # compile per top-level source group (bundled rules = ".", each third_party/<name>
+        # its own group) so the RSS budget check can skip a whole set BEFORE compiling
+        # it — a combined compile of everything would spike past the limit in one go
+        groups: dict[str, list[Path]] = {}
+        for f in files:
+            groups.setdefault(str(f.parent.relative_to(self._rules_dir)), []).append(f)
+        budget = yara_rss_budget_mb()
+        rules: list = []
         rules_count = 0
-        if files:
+        for key in sorted(groups):
+            group_files = groups[key]
+            rss = rss_mb()
+            if budget is not None and rss is not None and rss > budget:
+                logger.warning(
+                    "yara: skipping rule group %r (%d files): RSS %.0f MB already over "
+                    "budget %.0f MB (raise the container memory limit or YARA_RSS_BUDGET_MB)",
+                    key,
+                    len(group_files),
+                    rss,
+                    budget,
+                )
+                continue
             try:
-                combined = yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(files)})
-                rules_count = sum(_count_rules(f) for f in files)
+                rules.append(
+                    yara.compile(filepaths={f"ns{i}": str(f) for i, f in enumerate(group_files)})
+                )
+                rules_count += sum(_count_rules(f) for f in group_files)
             except yara.Error:
-                for f in files:
+                # one broken file must not kill the group: per-file fallback
+                for f in group_files:
                     try:
-                        per_file.append(yara.compile(filepath=str(f)))
+                        rules.append(yara.compile(filepath=str(f)))
                         rules_count += _count_rules(f)
                     except yara.Error:
                         continue
@@ -320,16 +369,20 @@ class YaraScanner:
         else:
             updated = max((f.stat().st_mtime for f in files), default=None)
         with self._lock:
-            self._combined = combined
-            self._per_file = per_file
+            self._rules = rules
             self._stamp = stamp
             self._rules_count = rules_count
             self._rules_updated = updated
-        logger.info("yara rules loaded: %d rules from %s", rules_count, self._rules_dir)
+        logger.info(
+            "yara rules loaded: %d rules in %d object(s) from %s",
+            rules_count,
+            len(rules),
+            self._rules_dir,
+        )
 
     def available(self) -> bool:
         with self._lock:
-            return self._combined is not None or bool(self._per_file)
+            return bool(self._rules)
 
     @property
     def rules_count(self) -> int:
@@ -357,9 +410,7 @@ class YaraScanner:
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
         with self._lock:
-            rules_list = ([self._combined] if self._combined is not None else []) + list(
-                self._per_file
-            )
+            rules_list = list(self._rules)
         if not rules_list:
             return []
         # match by filepath (mmap) when the sample is on disk, else in-memory bytes

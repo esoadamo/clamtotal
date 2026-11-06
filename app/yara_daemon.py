@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 
-from app.scanner import YaraScanner
+from app.scanner import YaraScanner, rss_mb
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +102,6 @@ def _mem_info() -> tuple[float | None, str | None]:
     """(RSS in MB, cgroup memory limit as text) for startup logging — the compile of
     a large rule set is the main memory spike; if the daemon gets SIGKILLed during it,
     the kernel OOM killer hit the cgroup limit."""
-    rss = None
-    try:
-        for line in Path("/proc/self/status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                rss = int(line.split()[1]) / 1024
-                break
-    except (OSError, ValueError, IndexError):
-        pass
     limit = None
     for p in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
         try:
@@ -117,7 +109,7 @@ def _mem_info() -> tuple[float | None, str | None]:
             break
         except OSError:
             continue
-    return rss, limit
+    return rss_mb(), limit
 
 
 def serve(rules_dir: str, socket_path: str) -> None:

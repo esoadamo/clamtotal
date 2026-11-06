@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # workers query the daemon instead of compiling the rule set into their own RAM.
     # Empty = in-process YaraScanner from YARA_RULES_DIR (local development).
     yara_socket: str = ""
+    # RSS budget in MB for the compiled YARA rule set: 0 = auto (cgroup memory limit
+    # minus current usage minus a 512 MB reserve), negative = unlimited, positive =
+    # explicit MB. Rule groups that would exceed it are skipped instead of letting the
+    # daemon get OOM-killed mid-compile.
+    yara_rss_budget_mb: int = 0
     # recursive scan of archive members: max members per archive, max depth
     max_embedded_files: int = 10
     max_scan_depth: int = 2

@@ -88,6 +88,25 @@ while IFS='|' read -r name url branch subdir || [ -n "$name" ]; do
   rm -rf "$tmp"
 done < "$SOURCES_CONF"
 
+# prune third_party sets whose source is no longer active in the conf (e.g. disabled
+# for memory reasons): their rules were downloaded into the persistent volume earlier
+# and would otherwise keep being compiled, eating the memory budget
+active_names="$(grep -vE '^\s*(#|$)' "$SOURCES_CONF" | cut -d'|' -f1 | tr '\n' ' ' || true)"
+if [ -d "$TARGET" ]; then
+  for dir in "$TARGET"/*/; do
+    [ -d "$dir" ] || continue
+    name="$(basename "$dir")"
+    case " $active_names " in
+      *" $name "*) ;;
+      *)
+        rm -rf "$dir"
+        echo "[yara-rules] pruned inactive rule set: $name"
+        updated=1
+        ;;
+    esac
+  done
+fi
+
 if [ "$updated" = "1" ]; then
   touch "$STAMP" 2>/dev/null || true  # signals YaraScanner to recompile on next scan
   echo "[yara-rules] done."

@@ -343,19 +343,21 @@ def test_recovery_runs_in_only_one_worker(client, monkeypatch):
 
 
 def test_rss_mb(monkeypatch):
-    assert main_module._rss_mb() is not None  # real /proc on Linux
+    import app.scanner as scanner_module
+
+    assert scanner_module.rss_mb() is not None  # real /proc on Linux
 
     def boom(self):
         raise OSError("no proc")
 
     monkeypatch.setattr(main_module.Path, "read_text", boom)
-    assert main_module._rss_mb() is None
+    assert scanner_module.rss_mb() is None
 
     monkeypatch.setattr(main_module.Path, "read_text", lambda self: "Name:\tpython\n")
-    assert main_module._rss_mb() is None  # no VmRSS line
+    assert scanner_module.rss_mb() is None  # no VmRSS line
 
     monkeypatch.setattr(main_module.Path, "read_text", lambda self: "VmRSS:\t 204800 kB\n")
-    assert main_module._rss_mb() == 200.0
+    assert scanner_module.rss_mb() == 200.0
 
 
 def test_upload_twice_second_is_cached_200(client):

@@ -40,6 +40,13 @@ def test_scripts_resolve_fangfrisch_from_venv():
     assert "/app/.venv/bin/fangfrisch" in s
 
 
+def test_yara_rules_script_prunes_inactive_sources():
+    # rule sets disabled in the sources conf must be removed from the persistent
+    # volume too, or they keep being compiled and eat the memory budget
+    s = (ROOT / "scripts/update-yara-rules.sh").read_text()
+    assert "pruned inactive rule set" in s and "active_names" in s
+
+
 def test_entrypoint_worker_count_configurable_capped_and_memory_logged():
     ep = (ROOT / "container-entrypoint.sh").read_text()
     # worker count overridable and capped: each worker loads the full YARA rule set,

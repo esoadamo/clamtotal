@@ -469,7 +469,7 @@ def test_yara_scanner_combines_rule_files_into_one_rules_object(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
     scanner = YaraScanner(str(tmp_path))
-    assert scanner._combined is not None and scanner._per_file == []
+    assert len(scanner._rules) == 2  # one compiled object per source group
     assert scanner.scan(b"x") == ["Same"]
 
 
@@ -479,8 +479,8 @@ def test_yara_scanner_skips_broken_files_and_allows_duplicate_rule_names(tmp_pat
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "b.yara").write_text("rule Same { condition: true }")
     scanner = YaraScanner(str(tmp_path))
-    # combined compile fails on the broken file -> per-file fallback, broken file skipped
-    assert scanner._combined is None and len(scanner._per_file) == 2
+    # the group compile fails on the broken file -> per-file fallback, broken skipped
+    assert len(scanner._rules) == 2  # "." group (a.yar) + "sub" group (b.yara)
     assert scanner.available() is True
     assert scanner.scan(b"x") == ["Same"]
     # fallback matches also run (via the thread pool) against a stored file path
@@ -691,6 +691,51 @@ def test_get_yara_scanner_compiles_without_lock_when_unwritable(monkeypatch, tmp
     monkeypatch.setattr(fcntl, "flock", no_lock)
     get_yara_scanner.cache_clear()
     assert get_yara_scanner() is not None  # falls back to compiling without the lock
+
+
+def test_rss_mb_and_budget(monkeypatch):
+    from app.scanner import rss_mb, yara_rss_budget_mb
+
+    rss = rss_mb()
+    assert rss is not None and rss > 0  # real /proc on Linux
+
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", 123)
+    assert yara_rss_budget_mb() == 123.0  # explicit MB wins
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", -1)
+    assert yara_rss_budget_mb() is None  # unlimited
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", 0)
+    # auto: cgroup v2 limit - current - 512 MB reserve
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self: "4294967296" if self.name == "memory.max" else "1073741824",
+    )
+    assert yara_rss_budget_mb() == pytest.approx((4294967296 - 1073741824) / 1e6 - 512)
+    monkeypatch.setattr(Path, "read_text", lambda self: "max")  # no limit -> unlimited
+    assert yara_rss_budget_mb() is None
+
+    def no_proc(self):
+        raise OSError("no proc")
+
+    monkeypatch.setattr(Path, "read_text", no_proc)
+    assert rss_mb() is None
+    assert yara_rss_budget_mb() is None
+
+
+def test_yara_scanner_skips_rule_groups_over_rss_budget(tmp_path, monkeypatch, caplog):
+    import logging
+
+    (tmp_path / "a.yar").write_text("rule RA { condition: true }")
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "b.yar").write_text("rule RB { condition: true }")
+    monkeypatch.setattr(settings, "yara_rss_budget_mb", 100)
+    rss_values = iter([10.0, 500.0])  # first group fits, second is over budget
+    monkeypatch.setattr(scanner_module, "rss_mb", lambda: next(rss_values))
+    with caplog.at_level(logging.WARNING):
+        scanner = YaraScanner(str(tmp_path))
+    assert "skipping rule group 'big'" in caplog.text
+    assert scanner.rules_count == 1  # only the first group was compiled
+    assert scanner.scan(b"x") == ["RA"]
 
 
 def test_yara_scanner_rule_stats(tmp_path):
