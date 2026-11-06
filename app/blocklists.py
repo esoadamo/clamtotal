@@ -35,13 +35,18 @@ _HOST_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 MAX_URL_INPUT = 2048
 
 
-def _valid_host(host: str) -> bool:
-    """A syntactically valid IP or dotted domain (label rules per RFC 1123)."""
+def _is_ip(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
         return True
     except ValueError:
-        pass
+        return False
+
+
+def _valid_host(host: str) -> bool:
+    """A syntactically valid IP or dotted domain (label rules per RFC 1123)."""
+    if _is_ip(host):
+        return True
     if "." not in host:
         return False
     return all(_HOST_LABEL_RE.match(label) for label in host.split("."))
@@ -70,19 +75,13 @@ def parse_blocklist_line(line: str) -> str | None:
     if line.startswith("*."):
         line = line[2:]
     domain = line.strip(".").lower()
-    if domain in ("localhost", "0.0.0.0", ""):
+    if domain in ("localhost", ""):
         return None
     if not _valid_host(domain):
         return None
+    if _is_ip(domain) and ipaddress.ip_address(domain).is_unspecified:
+        return None  # hosts-file wildcard address (e.g. the "0.0.0.0 0.0.0.0" line)
     return domain
-
-
-def _is_ip(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-        return True
-    except ValueError:
-        return False
 
 
 def normalize_url_input(value: str, require_tld: bool = False) -> tuple[str, str, str] | None:
