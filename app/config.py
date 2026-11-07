@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     clamd_timeout: float = 600.0
     clamd_chunk_size: int = 64 * 1024
     clamscan_path: str = "clamscan"
+    # subprocess timeout for one clamscan run; a sample that exceeds it marks the
+    # ClamAV engine "timed out" in the report instead of hanging the scan
     clamscan_timeout: int = 600
     # ClamAV signature database directory (clamd's DatabaseDirectory); used by /healthz
     # to report signature count and last update time. Empty = unknown. The container
@@ -64,17 +66,24 @@ class Settings(BaseSettings):
     # set, workers query the daemon over the socket instead of importing the feed
     # in-process. Empty = in-process feed from DOMAIN_FEED_DIR (local development).
     domain_feed_socket: str = ""
+    # per-lookup socket timeout for the domain feed daemon (DOMAIN_FEED_SOCKET); a
+    # lookup that exceeds it marks the domain feed engine "timed out" in the report
+    domain_feed_timeout: float = 30.0
     # Unix socket of the YARA scan daemon (container sets /tmp/yara.sock): when set,
     # workers query the daemon instead of compiling the rule set into their own RAM.
     # Empty = in-process YaraScanner from YARA_RULES_DIR (local development).
     yara_socket: str = ""
+    # per-roundtrip socket timeout for the YARA daemon (YARA_SOCKET); a scan the
+    # daemon cannot finish in time marks the YARA engine "timed out" in the report
+    yara_daemon_timeout: float = 600.0
     # RSS budget in MB for the compiled YARA rule set: 0 = auto (cgroup memory limit
     # minus current usage minus a 512 MB reserve), negative = unlimited, positive =
     # explicit MB. Rule groups that would exceed it are skipped instead of letting the
     # daemon get OOM-killed mid-compile.
     yara_rss_budget_mb: int = 0
     # per-match timeout in seconds: a pathological sample (catastrophic regex
-    # backtracking) must not hang a yara daemon thread forever
+    # backtracking) must not hang a yara daemon thread forever; exceeding it marks
+    # the YARA engine "timed out" in the report
     yara_match_timeout: int = 60
     # recursive scan of archive members: max members per archive, max depth
     max_embedded_files: int = 10

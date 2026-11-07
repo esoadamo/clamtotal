@@ -54,6 +54,7 @@ from app.domain_feed import get_domain_feed, scan_url
 from app.models import Scan, UrlScan
 from app.scanner import (
     Scanner,
+    ScannerTimeoutError,
     ScannerUnavailableError,
     ScanResult,
     clamav_db_stats,
@@ -431,24 +432,34 @@ def _scan_and_store(
     result: ScanResult | None = None
     engine_idx = 0
     if scanner is not None:
-        result = scanner.scan(data, path=path)
-        engines[engine_idx].update(
-            {"status": "done", "verdict": result.verdict, "signature": result.signature}
-        )
+        try:
+            result = scanner.scan(data, path=path)
+        except (ScannerTimeoutError, TimeoutError):
+            logger.warning("engine %s timed out; marked as timed out", scanner.engine)
+            engines[engine_idx].update({"status": "timed out"})
+        else:
+            engines[engine_idx].update(
+                {"status": "done", "verdict": result.verdict, "signature": result.signature}
+            )
         engine_idx += 1
         scan.engines = [dict(e) for e in engines]
         db.commit()
 
     yara = get_yara_scanner()
     if yara is not None:
-        matches = yara.scan(data, path=path)
-        engines[engine_idx].update(
-            {
-                "status": "done",
-                "verdict": "infected" if matches else "clean",
-                "signature": ", ".join(matches) if matches else None,
-            }
-        )
+        try:
+            matches = yara.scan(data, path=path)
+        except (ScannerTimeoutError, TimeoutError):
+            logger.warning("engine %s timed out; marked as timed out", yara.engine)
+            engines[engine_idx].update({"status": "timed out"})
+        else:
+            engines[engine_idx].update(
+                {
+                    "status": "done",
+                    "verdict": "infected" if matches else "clean",
+                    "signature": ", ".join(matches) if matches else None,
+                }
+            )
         engine_idx += 1
         scan.engines = [dict(e) for e in engines]
         db.commit()
@@ -463,20 +474,25 @@ def _scan_and_store(
                 scan_url(db, domain, feed)
                 for m in feed.lookup(domain):
                     hits.append(f"{m['domain']} ({m['category']}, {m['source']})")
+        except (ScannerTimeoutError, TimeoutError):
+            logger.warning("engine %s timed out; marked as timed out", feed.engine)
+            engines[engine_idx].update({"status": "timed out"})
         except Exception:
             logger.warning("domain feed lookup failed during scan", exc_info=True)
-        engines[engine_idx].update(
-            {
-                "status": "done",
-                "verdict": "infected" if hits else "clean",
-                "signature": ", ".join(sorted(set(hits))) if hits else None,
-            }
-        )
+            engines[engine_idx].update({"status": "done", "verdict": "clean", "signature": None})
+        else:
+            engines[engine_idx].update(
+                {
+                    "status": "done",
+                    "verdict": "infected" if hits else "clean",
+                    "signature": ", ".join(sorted(set(hits))) if hits else None,
+                }
+            )
         scan.engines = [dict(e) for e in engines]
         db.commit()
 
-    verdict = "infected" if any(e["verdict"] == "infected" for e in engines) else "clean"
-    signature = next((e["signature"] for e in engines if e["verdict"] == "infected"), None)
+    verdict = "infected" if any(e.get("verdict") == "infected" for e in engines) else "clean"
+    signature = next((e.get("signature") for e in engines if e.get("verdict") == "infected"), None)
 
     # offline static analysis, mimicking VirusTotal's Details/Behavior/Network tabs
     file_type, magic_hex = sniff_file_type(data)

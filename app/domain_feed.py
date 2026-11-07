@@ -316,7 +316,7 @@ class DomainFeedClient:
     def _connect(self) -> socket.socket:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(self._socket_path)
-        sock.settimeout(30)
+        sock.settimeout(settings.domain_feed_timeout)
         return sock
 
     def _recv_response(self, sock: socket.socket) -> bytes:

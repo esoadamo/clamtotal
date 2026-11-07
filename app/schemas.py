@@ -25,7 +25,8 @@ class EngineVerdict(BaseModel):
     name: str = Field(description="engine name, e.g. 'ClamAV (clamd)'")
     status: str = Field(
         default="done",
-        description="'scanning' while the engine runs, 'done' once the verdict is in",
+        description="'scanning' while the engine runs, 'done' once the verdict is in, "
+        "'timed out' when the engine exceeded its configured timeout",
     )
     verdict: str = Field(
         default="", description="'clean' | 'infected' (empty while still scanning)"

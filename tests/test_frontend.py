@@ -107,6 +107,46 @@ def test_pending_report_contract(client, monkeypatch):
     assert "fe.bin" in page and sha in page  # header details are there from the start
 
 
+def test_pending_report_shows_timed_out_engine(client):
+    # an engine that exceeded its timeout renders as "Timed out" (amber), not as a
+    # perpetual spinner, and counts as finished in the progress line
+    sha = "7d" * 32
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha,
+                md5="5" * 32,
+                sha1="5" * 40,
+                file_name="to.bin",
+                size=1,
+                file_type="data",
+                magic_hex="",
+                verdict="pending",
+                status="pending",
+                engine="pending",
+                urls=[],
+                engines=[
+                    {
+                        "name": "ClamAV (fake)",
+                        "status": "done",
+                        "verdict": "clean",
+                        "signature": None,
+                    },
+                    {"name": "YARA (daemon)", "status": "timed out"},
+                ],
+            )
+        )
+        db.commit()
+    page = client.get(f"/ui/file/{sha}").text
+    assert "Timed out" in page
+    assert "#b45309" in page  # amber warning icon
+    assert "Scanning… 2 of 2 engines finished" in page
+    assert '<div class="spinner engine-spinner"></div>' not in page  # no spinner left
+
+
 def test_pending_report_without_engines_shows_generic_row(client):
     sha = "8e" * 32
     from app.db import SessionLocal

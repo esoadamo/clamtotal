@@ -66,6 +66,23 @@ def test_client_unavailable_when_no_daemon(tmp_path):
     assert client.version() is None
 
 
+def test_client_uses_yara_daemon_timeout(monkeypatch):
+    # the daemon client socket timeout comes from YARA_DAEMON_TIMEOUT, not CLAMD_TIMEOUT
+    monkeypatch.setattr(settings, "yara_daemon_timeout", 123.0)
+    seen = {}
+
+    class FakeSock:
+        def connect(self, addr):
+            pass
+
+        def settimeout(self, t):
+            seen["t"] = t
+
+    monkeypatch.setattr(socket, "socket", lambda family, type_: FakeSock())
+    YaraDaemonClient("/tmp/x.sock")._connect()
+    assert seen["t"] == 123.0
+
+
 def test_client_recv_handles_server_closing_without_nul(tmp_path):
     # server accepts then closes without any NUL-terminated response
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

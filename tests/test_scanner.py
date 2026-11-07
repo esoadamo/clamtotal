@@ -15,6 +15,7 @@ from app.config import settings
 from app.scanner import (
     ClamdScanner,
     ClamscanScanner,
+    ScannerTimeoutError,
     ScannerUnavailableError,
     YaraScanner,
     _count_rules,
@@ -116,7 +117,7 @@ class TimeoutSocket(FakeSocket):
 
 def test_clamd_scan_timeout_is_a_clear_error(monkeypatch, tmp_path):
     # clamd still busy scanning a large sample -> per-recv timeout must surface as a
-    # clear ScannerUnavailableError (mentioning CLAMD_TIMEOUT), not a raw TimeoutError
+    # clear ScannerTimeoutError (mentioning CLAMD_TIMEOUT), not a raw TimeoutError
     p = tmp_path / "big.bin"
     p.write_bytes(b"x" * 100)
 
@@ -124,19 +125,21 @@ def test_clamd_scan_timeout_is_a_clear_error(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
     fake = TimeoutSocket(b"")
     monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
-    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+    with pytest.raises(ScannerTimeoutError, match="CLAMD_TIMEOUT"):
         ClamdScanner().scan(b"x" * 100, path=p)
 
     # INSTREAM path (tcp, small data)
     monkeypatch.setattr(settings, "clamd_socket", None)
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: TimeoutSocket(b""))
-    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+    with pytest.raises(ScannerTimeoutError, match="CLAMD_TIMEOUT"):
         ClamdScanner().scan(b"small")
 
     # file-based SCAN path (tcp, data over stream_scan_max_size)
     monkeypatch.setattr(settings, "stream_scan_max_size", 4)
-    with pytest.raises(ScannerUnavailableError, match="CLAMD_TIMEOUT"):
+    with pytest.raises(ScannerTimeoutError, match="CLAMD_TIMEOUT"):
         ClamdScanner().scan(b"this is larger than four bytes")
+    # a timeout is still a ScannerUnavailableError for the 503 handler on sync paths
+    assert issubclass(ScannerTimeoutError, ScannerUnavailableError)
 
 
 def test_clamd_scan_routes_without_socket_or_path(monkeypatch):
@@ -420,6 +423,23 @@ def test_clamscan_available(tmp_path, monkeypatch):
     assert ClamscanScanner().available() is False
     monkeypatch.setattr(settings, "clamscan_path", "clamscan")
     assert ClamscanScanner().available() == bool(shutil.which("clamscan"))
+
+
+def test_clamscan_timeout_raises_scanner_timeout(monkeypatch):
+    # clamscan still busy on a large sample -> subprocess.TimeoutExpired must surface
+    # as ScannerTimeoutError (mentioning CLAMSCAN_TIMEOUT), so the scan marks the
+    # engine "timed out" instead of failing the whole scan
+    monkeypatch.setattr(settings, "clamscan_path", "clamscan")
+    monkeypatch.setattr(settings, "clamscan_timeout", 7)
+
+    scanner = ClamscanScanner()
+
+    def hang(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 7.0)  # matches CLAMSCAN_TIMEOUT set above
+
+    monkeypatch.setattr(scanner_module.subprocess, "run", hang)
+    with pytest.raises(ScannerTimeoutError, match="CLAMSCAN_TIMEOUT=7s"):
+        scanner.scan(b"x")
 
 
 def test_get_scanner_modes(monkeypatch):
@@ -771,7 +791,7 @@ def test_yara_scanner_skips_rule_groups_over_rss_budget(tmp_path, monkeypatch, c
     assert scanner.rules_count == 0 and not scanner.available()
 
 
-def test_yara_scan_match_timeout_returns_no_matches(tmp_path, monkeypatch, caplog):
+def test_yara_scan_match_timeout_raises_scanner_timeout(tmp_path, monkeypatch, caplog):
     import logging
 
     import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
@@ -785,7 +805,8 @@ def test_yara_scan_match_timeout_returns_no_matches(tmp_path, monkeypatch, caplo
 
     with caplog.at_level(logging.WARNING):
         scanner._rules = [TimeoutRules()]
-        assert scanner.scan(b"x") == []
+        with pytest.raises(ScannerTimeoutError, match="YARA_MATCH_TIMEOUT"):
+            scanner.scan(b"x")
     assert "timed out" in caplog.text
 
 

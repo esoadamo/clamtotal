@@ -8,7 +8,7 @@ from sqlalchemy import select
 import app.main as main_module
 from app.db import SessionLocal
 from app.models import Scan
-from app.scanner import ScannerUnavailableError, ScanResult
+from app.scanner import ScannerTimeoutError, ScannerUnavailableError, ScanResult
 
 
 @pytest.fixture(autouse=True)
@@ -272,6 +272,59 @@ def test_scan_and_store_domain_feed_engine_clean_and_error(client, monkeypatch):
     feed_eng2 = next(e for e in scan2.engines or [] if e["name"] == "Domain feed (fake)")
     assert feed_eng2["verdict"] == "clean"  # feed errors are non-fatal
     assert scan2.verdict == "clean"
+
+
+def test_engine_timeouts_are_marked_timed_out(client, monkeypatch):
+    """An engine that exceeds its timeout (ScannerTimeoutError from the scanner, or a
+    raw socket TimeoutError from a daemon client) is marked 'timed out' in the
+    per-engine status and does not fail or block the rest of the scan."""
+
+    class TimeoutScanner:
+        engine = "ClamAV (timeout)"
+
+        def available(self):
+            return True
+
+        def version(self):
+            return "timeout-1.0"
+
+        def scan(self, data, path=None):
+            raise ScannerTimeoutError("clamd did not answer within CLAMD_TIMEOUT=1s")
+
+    class TimeoutYara:
+        engine = "YARA (daemon)"
+
+        def scan(self, data, path=None):
+            raise TimeoutError("socket timeout")  # raw socket.timeout from the daemon
+
+    class TimeoutFeed(FakeFeed):
+        def lookup(self, host):
+            raise TimeoutError("feed socket timeout")
+
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: TimeoutYara())
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: TimeoutFeed())
+    content = b"timeout sample contacting slow-example.com now"
+    with SessionLocal() as db:
+        scan, _ = main_module._scan_and_store(db, TimeoutScanner(), content, "t.bin", False)
+    assert scan.status == "done"
+    assert [e["name"] for e in scan.engines or []] == [
+        "ClamAV (timeout)",
+        "YARA (daemon)",
+        "Domain feed (fake)",
+    ]
+    assert [e["status"] for e in scan.engines or []] == ["timed out", "timed out", "timed out"]
+    assert all("verdict" not in e for e in scan.engines or [])
+    assert scan.verdict == "clean"  # no engine reported infected
+
+    # one engine timing out must not hide another engine's verdict
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: TimeoutYara())
+    content2 = b"mixed sample " + b"x" * 8
+    with SessionLocal() as db:
+        scan2, _ = main_module._scan_and_store(db, fake_scanner, content2, "m2.bin", False)
+    statuses = {e["name"]: e["status"] for e in scan2.engines or []}
+    assert statuses["ClamAV (fake)"] == "done"
+    assert statuses["YARA (daemon)"] == "timed out"
+    assert scan2.status == "done"
 
 
 def test_scanning_engines_includes_domain_feed(client, monkeypatch):

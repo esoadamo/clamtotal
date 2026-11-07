@@ -261,6 +261,25 @@ def test_reload_if_stamped_branches(feed_dir, monkeypatch, caplog):
     assert "domain feed reload failed" in caplog.text
 
 
+def test_feed_client_uses_domain_feed_timeout(monkeypatch):
+    # the daemon client socket timeout comes from DOMAIN_FEED_TIMEOUT, not a hardcoded value
+    import socket
+
+    monkeypatch.setattr(settings, "domain_feed_timeout", 12.5)
+    seen = {}
+
+    class FakeSock:
+        def connect(self, addr):
+            pass
+
+        def settimeout(self, t):
+            seen["t"] = t
+
+    monkeypatch.setattr(socket, "socket", lambda family, type_: FakeSock())
+    feed.DomainFeedClient("/tmp/x.sock")._connect()
+    assert seen["t"] == 12.5
+
+
 def test_get_domain_feed_resolution(feed_dir, monkeypatch, tmp_path):
     _seed(feed_dir)
     f = get_domain_feed()

@@ -144,23 +144,26 @@ Feed updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=f
 | `APP_VERSION` | build stamp | version shown in the page footer; the container image sets it at build time to `YYMMDD.hhmmss` UTC (`/app/.build-version`) |
 | `CLAM_MODE` | `auto` | `auto`, `daemon` (aliases `clamd`/`tcp`), or `cli` (clamscan); any other value fails startup |
 | `CLAMD_HOST` / `CLAMD_PORT` | `127.0.0.1` / `3310` | clamd TCP endpoint |
-| `CLAMD_TIMEOUT` | `600` | per-recv socket timeout for clamd answers; clamd can take minutes on a large sample before replying — a timeout surfaces as a clear 503 `clamd did not answer within CLAMD_TIMEOUT=...s` instead of a raw `TimeoutError` |
+| `CLAMD_TIMEOUT` | `600` | per-recv socket timeout for clamd answers; clamd can take minutes on a large sample before replying — a timeout surfaces as a clear error `clamd did not answer within CLAMD_TIMEOUT=...s` instead of a raw `TimeoutError`, and marks the ClamAV engine `timed out` in the report |
 | `CLAMD_SOCKET` | `/tmp/clamd.sock` in the container | Unix socket for clamd; when set, stored samples are scanned via `FILDES` (fd passed with `SCM_RIGHTS`), so no `StreamMaxLength` cap and no file-permission issues — multi-GB files work when `MAX_UPLOAD_SIZE` is raised |
 | `CLAMD_SOCKET` | unset | clamd Unix socket (takes precedence over TCP) |
 | `CLAMSCAN_PATH` | `clamscan` | clamscan binary for CLI mode |
+| `CLAMSCAN_TIMEOUT` | `600` | subprocess timeout for one clamscan run; exceeding it marks the ClamAV engine `timed out` in the report |
 | `ENABLED_SCANNERS` | `clamav,yara` | comma-separated list of enabled scan engines: `clamav` (clamd/clamscan) and/or `yara` (local rules); any other value fails with an error |
 | `CLAMAV_DB_DIR` | unset (container: `/var/lib/clamav`) | ClamAV signature database directory; `/healthz` reports the signature count and last update time from it |
 | `LOG_LEVEL` | `info` | log level for the app logger and (in the container, via the entrypoint) uvicorn; `debug` shows worker lifecycle/restart reasons, scan start/done/failure logs, and native tracebacks on hard crashes (faulthandler) |
 | `YARA_RULES_DIR` | unset | directory with local public YARA rules (`.yar`/`.yara`); in the container `/rules` |
 | `YARA_SOCKET` | unset (container: `/tmp/yara.sock`) | Unix socket of the YARA scan daemon (`app/yara_daemon.py`, started by the container entrypoint); workers query it over the socket instead of each compiling the rule set into their own RAM. Unset = in-process engine from `YARA_RULES_DIR` (local dev) |
 | `YARA_RSS_BUDGET_MB` | `0` (auto) | RSS budget in MB for the compiled YARA rule set: `0` = cgroup memory limit − current usage − 512 MB reserve, negative = unlimited, positive = explicit MB. Rule sets that would exceed the budget are skipped (with a log line) instead of getting the daemon OOM-killed mid-compile |
-| `YARA_MATCH_TIMEOUT` | `60` | per-match timeout in seconds for the YARA daemon; a sample that hits catastrophic regex backtracking is skipped (logged) instead of hanging a daemon thread |
+| `YARA_MATCH_TIMEOUT` | `60` | per-match timeout in seconds for the in-process YARA engine; a sample that hits catastrophic regex backtracking is not hung forever — exceeding it marks the YARA engine `timed out` in the report |
+| `YARA_DAEMON_TIMEOUT` | `600` | per-roundtrip socket timeout for the YARA daemon (`YARA_SOCKET`); a scan the daemon cannot finish in time marks the YARA engine `timed out` in the report |
 
 Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon compiles the rule set once; with all default third-party YARA sources that is several GB. If the daemon or workers get OOM-killed (`Killed`/`Child process died` with no traceback), raise the container memory limit (compose `mem_limit: 8g`) or trim `container/yara-rules-sources.conf` (signature-base is disabled by default for this reason). |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `DOMAIN_FEED_DIR` | unset (container: `/data/domain-feed`) | directory with downloaded domain feed files (`<name>.txt` + `.feed-stamp` + `feed.db`); empty disables URL scanning |
 | `DOMAIN_FEED_SOURCES` | `/etc/domain-feed-sources.conf` | domain feed sources (`name|category|url`) for `scripts/update-domain-feed.sh` |
 | `DOMAIN_FEED_SOCKET` | unset (container: `/tmp/domain-feed.sock`) | Unix socket of the domain feed daemon; when set, workers query it instead of importing the feed in-process |
+| `DOMAIN_FEED_TIMEOUT` | `30` | per-lookup socket timeout for the domain feed daemon (`DOMAIN_FEED_SOCKET`); a lookup that exceeds it marks the domain feed engine `timed out` in the report |
 | `URLHAUS_AUTH_KEY` | unset | free URLhaus API key substituted into the `<URLHAUS_AUTH_KEY>` placeholder of the (commented-out) urlhaus source |
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |

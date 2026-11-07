@@ -292,6 +292,9 @@
         ? '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#c52420" d="M14.4 6 14 4H5v17h2v-7h5.6l-.4 2h7V6z"/></svg>'
         : '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#39ac4c" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
     }
+    if (e && e.status === 'timed out') {
+      return '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#b45309" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+    }
     return '<div class="spinner engine-spinner"></div>';
   }
 
@@ -300,6 +303,9 @@
       return e.verdict === 'infected'
         ? '<span class="flag">' + escapeHtml(e.signature || 'infected') + '</span>'
         : '<span class="muted">Undetected</span>';
+    }
+    if (e && e.status === 'timed out') {
+      return '<span style="color:#b45309">Timed out</span>';
     }
     return '<span class="muted">Scanning…</span>';
   }
@@ -324,7 +330,7 @@
      Must stay in sync with the data-key attribute rendered by report.html. */
   function progressKey(data) {
     var done = Array.isArray(data.engines)
-      ? data.engines.filter(function (e) { return e.status === 'done'; }).length
+      ? data.engines.filter(function (e) { return e.status !== 'scanning'; }).length
       : 0;
     return done + ':' + (data.behavior ? 1 : 0);
   }

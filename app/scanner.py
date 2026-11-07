@@ -37,6 +37,15 @@ class ScannerUnavailableError(RuntimeError):
     pass
 
 
+class ScannerTimeoutError(ScannerUnavailableError):
+    """An engine exceeded its configured timeout (CLAMD_TIMEOUT/CLAMSCAN_TIMEOUT/
+    YARA_MATCH_TIMEOUT/YARA_DAEMON_TIMEOUT). Subclasses ScannerUnavailableError so
+    the 503 handler still applies on the synchronous path; the background scan marks
+    the engine "timed out" in the per-engine status instead of failing the scan."""
+
+    pass
+
+
 class Scanner(Protocol):
     engine: str
 
@@ -113,7 +122,7 @@ class ClamdScanner:
                     break
                 response += part
         except TimeoutError:
-            raise ScannerUnavailableError(
+            raise ScannerTimeoutError(
                 f"clamd did not answer within CLAMD_TIMEOUT={settings.clamd_timeout:.0f}s — "
                 "the sample is still being scanned; raise CLAMD_TIMEOUT if it is large"
             ) from None
@@ -238,12 +247,18 @@ class ClamscanScanner:
             if path is not None
             else [self._path, "--stdout", "-"]
         )
-        proc = subprocess.run(
-            cmd,
-            input=None if path is not None else data,
-            capture_output=True,
-            timeout=settings.clamscan_timeout,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=None if path is not None else data,
+                capture_output=True,
+                timeout=settings.clamscan_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise ScannerTimeoutError(
+                f"clamscan did not finish within CLAMSCAN_TIMEOUT={settings.clamscan_timeout}s "
+                "— the sample is still being scanned; raise CLAMSCAN_TIMEOUT if it is large"
+            ) from None
         out = proc.stdout.decode(errors="replace")
         err = proc.stderr.decode(errors="replace")
         if proc.returncode == 2:
@@ -466,10 +481,13 @@ class YaraScanner:
             return rules.match(data=data, timeout=settings.yara_match_timeout)
         except yara.TimeoutError:
             logger.warning(
-                "yara match timed out after %.0fs — sample skipped for this rule object",
+                "yara match timed out after %.0fs — engine marked timed out",
                 settings.yara_match_timeout,
             )
-            return []
+            raise ScannerTimeoutError(
+                f"yara match did not finish within "
+                f"YARA_MATCH_TIMEOUT={settings.yara_match_timeout}s"
+            ) from None
 
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
@@ -571,7 +589,7 @@ class YaraDaemonClient:
     def _connect(self) -> socket.socket:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(self._socket_path)
-        sock.settimeout(settings.clamd_timeout)
+        sock.settimeout(settings.yara_daemon_timeout)
         return sock
 
     def _recv_response(self, sock: socket.socket) -> bytes:
