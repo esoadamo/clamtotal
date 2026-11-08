@@ -68,8 +68,8 @@ def _send_matches(conn: socket.socket, matches: list[str]) -> None:
 
 
 def handle_conn(conn: socket.socket, scanner: YaraScanner) -> None:
-    try:
-        with conn:
+    with conn:
+        try:
             cmd = _recv_command(conn)
             if cmd == b"zPING":
                 conn.sendall(b"PONG\x00")
@@ -94,8 +94,16 @@ def handle_conn(conn: socket.socket, scanner: YaraScanner) -> None:
                 _handle_instream(conn, scanner)
             else:
                 conn.sendall(b"ERROR unknown command\x00")
-    except OSError:
-        pass  # client went away mid-command
+        except OSError:
+            pass  # client went away mid-command
+        except Exception as exc:
+            # scan failure (e.g. yara.Error when the sample file vanished between the
+            # client's existence check and the mmap): answer ERROR so the client raises
+            # ScannerUnavailableError instead of choking on an empty reply
+            try:
+                conn.sendall(f"ERROR {exc}\x00".encode())
+            except OSError:
+                pass
 
 
 def _mem_info() -> tuple[float | None, str | None]:

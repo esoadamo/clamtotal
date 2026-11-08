@@ -810,6 +810,21 @@ def test_yara_scan_match_timeout_raises_scanner_timeout(tmp_path, monkeypatch, c
     assert "timed out" in caplog.text
 
 
+def test_yara_scan_yara_error_raises_scanner_unavailable(tmp_path):
+    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+
+    class ErrorRules:
+        def match(self, **kwargs):
+            raise yara.Error('could not open file "/data/uploads/gone"')
+
+    scanner._rules = [ErrorRules()]
+    with pytest.raises(ScannerUnavailableError, match="could not open file"):
+        scanner.scan(b"x", path=tmp_path / "gone")
+
+
 def test_yara_scanner_big_group_compiles_per_file_with_budget_cutoff(tmp_path, monkeypatch, caplog):
     import logging
 

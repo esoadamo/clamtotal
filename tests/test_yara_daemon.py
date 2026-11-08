@@ -121,6 +121,71 @@ def test_scan_error_response_raises(daemon, monkeypatch, tmp_path):
         client.scan(b"data", path=sample)  # path branch goes through _roundtrip
 
 
+def test_scan_garbled_response_raises(daemon, monkeypatch, tmp_path):
+    # daemon died mid-scan without answering (empty reply) or sent garbage:
+    # the client must raise ScannerUnavailableError, not json.JSONDecodeError
+    client = YaraDaemonClient(daemon[1])
+    sample = tmp_path / "s.bin"
+    sample.write_bytes(b"x")
+    for garbage in (b"", b"not json"):
+        monkeypatch.setattr(client, "_roundtrip", lambda payload, g=garbage: g)
+        with pytest.raises(ScannerUnavailableError, match="invalid response"):
+            client.scan(b"data", path=sample)
+
+
+def test_scanpath_unreadable_file_replies_error(daemon, tmp_path):
+    # the sample became unreadable between the client's path.exists() check and the
+    # daemon's mmap (e.g. TTL cleanup deleted it): a directory deterministically makes
+    # yara raise "could not open file" — the daemon answers ERROR instead of dying
+    rules, sock_path = daemon
+    resp = _raw(sock_path, b"zSCANPATH " + str(rules).encode() + b"\0")
+    assert resp.startswith(b"ERROR ")
+    assert "could not open file" in resp.decode(errors="replace")
+
+
+def test_handle_conn_scan_error_reply_and_send_failure(monkeypatch):
+    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+
+    class BoomScanner:
+        engine = "YARA (local rules)"
+        rules_count = 0
+        rules_updated_at = None
+
+        def scan(self, data, path=None):
+            raise yara.Error("could not open file /x")
+
+    class FakeConn:
+        def __init__(self, fail_send=False):
+            self._cmd = b"zSCANPATH /x\x00"
+            self._i = 0
+            self.sent = b""
+            self.fail_send = fail_send
+
+        def recv(self, n):
+            if self._i >= len(self._cmd):
+                return b""
+            byte = self._cmd[self._i : self._i + 1]
+            self._i += 1
+            return byte
+
+        def sendall(self, data):
+            if self.fail_send:
+                raise OSError("client gone")
+            self.sent += data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    conn = FakeConn()
+    handle_conn(conn, BoomScanner())  # ty: ignore[invalid-argument-type]
+    assert conn.sent == b"ERROR could not open file /x\x00"
+    # the ERROR reply itself failing (client vanished) must not crash the handler
+    handle_conn(FakeConn(fail_send=True), BoomScanner())  # ty: ignore[invalid-argument-type]
+
+
 def test_stats_and_unknown_command(daemon):
     _, sock_path = daemon
     stats = json.loads(_raw(sock_path, b"zSTATS\0"))

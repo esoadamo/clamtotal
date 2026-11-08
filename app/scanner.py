@@ -488,6 +488,11 @@ class YaraScanner:
                 f"yara match did not finish within "
                 f"YARA_MATCH_TIMEOUT={settings.yara_match_timeout}s"
             ) from None
+        except yara.Error as exc:
+            # e.g. "could not open file" when the sample was deleted between the
+            # caller's path.exists() check and the mmap — surface as a clean
+            # ScannerUnavailableError instead of a raw yara.Error
+            raise ScannerUnavailableError(f"yara match failed: {exc}") from None
 
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         self._reload_if_stamped()
@@ -635,7 +640,13 @@ class YaraDaemonClient:
                 resp = self._recv_response(sock)
         if resp.startswith(b"ERROR"):
             raise ScannerUnavailableError(resp.decode(errors="replace"))
-        return json.loads(resp)
+        try:
+            return json.loads(resp)
+        except json.JSONDecodeError:
+            # empty/garbled reply (daemon died mid-scan without answering)
+            raise ScannerUnavailableError(
+                f"invalid response from YARA daemon: {resp[:200]!r}"
+            ) from None
 
 
 def yara_rules_stats(rules_dir: str) -> tuple[int | None, float | None]:
