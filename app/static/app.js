@@ -295,6 +295,9 @@
     if (e && e.status === 'timed out') {
       return '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#b45309" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
     }
+    if (e && e.status === 'unavailable') {
+      return '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#6b7280" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>';
+    }
     return '<div class="spinner engine-spinner"></div>';
   }
 
@@ -306,6 +309,9 @@
     }
     if (e && e.status === 'timed out') {
       return '<span style="color:#b45309">Timed out</span>';
+    }
+    if (e && e.status === 'unavailable') {
+      return '<span class="muted">Unavailable</span>';
     }
     return '<span class="muted">Scanning…</span>';
   }

@@ -335,15 +335,17 @@ test('engineRowHtml renders a spinner while scanning, verdicts when done', () =>
   assert.match(evil, /&lt;script&gt;/);
 });
 
-test('engineStateHtml/engineResultHtml cover scanning, clean, infected and timed out', () => {
+test('engineStateHtml/engineResultHtml cover scanning, clean, infected, timed out and unavailable', () => {
   assert.match(CT.engineStateHtml({ status: 'scanning' }), /engine-spinner/);
   assert.match(CT.engineStateHtml({ status: 'done', verdict: 'clean' }), /#39ac4c/);
   assert.match(CT.engineStateHtml({ status: 'done', verdict: 'infected' }), /#c52420/);
   assert.match(CT.engineStateHtml({ status: 'timed out' }), /#b45309/);
+  assert.match(CT.engineStateHtml({ status: 'unavailable' }), /#6b7280/);
   assert.match(CT.engineResultHtml({ status: 'scanning' }), /Scanning…/);
   assert.match(CT.engineResultHtml({ status: 'done', verdict: 'clean' }), /Undetected/);
   assert.match(CT.engineResultHtml({ status: 'done', verdict: 'infected', signature: 'Sig-1' }), /Sig-1/);
   assert.match(CT.engineResultHtml({ status: 'timed out' }), /Timed out/);
+  assert.match(CT.engineResultHtml({ status: 'unavailable' }), /Unavailable/);
 });
 
 test('updateDetectionEngines re-renders one row per engine and is null-safe', () => {

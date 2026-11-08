@@ -437,6 +437,11 @@ def _scan_and_store(
         except (ScannerTimeoutError, TimeoutError):
             logger.warning("engine %s timed out; marked as timed out", scanner.engine)
             engines[engine_idx].update({"status": "timed out"})
+        except (ScannerUnavailableError, OSError) as exc:
+            # daemon/socket down mid-scan (e.g. ConnectionRefusedError on the clamd or
+            # YARA-daemon socket): fail only this engine, not the whole scan
+            logger.warning("engine %s unavailable: %s; marked as unavailable", scanner.engine, exc)
+            engines[engine_idx].update({"status": "unavailable", "error": str(exc)})
         else:
             engines[engine_idx].update(
                 {"status": "done", "verdict": result.verdict, "signature": result.signature}
@@ -452,6 +457,9 @@ def _scan_and_store(
         except (ScannerTimeoutError, TimeoutError):
             logger.warning("engine %s timed out; marked as timed out", yara.engine)
             engines[engine_idx].update({"status": "timed out"})
+        except (ScannerUnavailableError, OSError) as exc:
+            logger.warning("engine %s unavailable: %s; marked as unavailable", yara.engine, exc)
+            engines[engine_idx].update({"status": "unavailable", "error": str(exc)})
         else:
             engines[engine_idx].update(
                 {
@@ -477,6 +485,9 @@ def _scan_and_store(
         except (ScannerTimeoutError, TimeoutError):
             logger.warning("engine %s timed out; marked as timed out", feed.engine)
             engines[engine_idx].update({"status": "timed out"})
+        except (ScannerUnavailableError, OSError) as exc:
+            logger.warning("engine %s unavailable: %s; marked as unavailable", feed.engine, exc)
+            engines[engine_idx].update({"status": "unavailable", "error": str(exc)})
         except Exception:
             logger.warning("domain feed lookup failed during scan", exc_info=True)
             engines[engine_idx].update({"status": "done", "verdict": "clean", "signature": None})

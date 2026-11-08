@@ -327,6 +327,59 @@ def test_engine_timeouts_are_marked_timed_out(client, monkeypatch):
     assert scan2.status == "done"
 
 
+def test_engine_connection_refused_is_marked_unavailable(client, monkeypatch):
+    """A daemon socket that refuses the connection mid-scan (ConnectionRefusedError /
+    FileNotFoundError on the clamd or YARA-daemon socket, or a ScannerUnavailableError
+    from an unexpected engine reply) is marked 'unavailable' for that engine only —
+    the scan still completes and keeps the other engines' verdicts."""
+
+    class RefusedScanner:
+        engine = "ClamAV (refused)"
+
+        def available(self):
+            return True
+
+        def version(self):
+            return "refused-1.0"
+
+        def scan(self, data, path=None):
+            raise ConnectionRefusedError(111, "Connection refused")
+
+    class RefusedYara:
+        engine = "YARA (daemon)"
+
+        def scan(self, data, path=None):
+            raise FileNotFoundError(2, "No such file or directory")  # socket vanished
+
+    class RefusedFeed(FakeFeed):
+        def lookup(self, host):
+            raise ScannerUnavailableError("feed daemon unreachable")
+
+    monkeypatch.setattr(main_module, "get_yara_scanner", lambda: RefusedYara())
+    monkeypatch.setattr(main_module, "get_domain_feed", lambda: RefusedFeed())
+    content = b"refused sample contacting refused-example.com now"
+    with SessionLocal() as db:
+        scan, _ = main_module._scan_and_store(db, RefusedScanner(), content, "r.bin", False)
+    assert scan.status == "done"
+    assert [e["status"] for e in scan.engines or []] == [
+        "unavailable",
+        "unavailable",
+        "unavailable",
+    ]
+    assert all("verdict" not in e for e in scan.engines or [])
+    assert scan.verdict == "clean"  # no engine reported infected
+
+    # one engine down must not hide another engine's verdict
+    content2 = b"mixed sample contacting refused-example.com now " + b"x" * 8
+    with SessionLocal() as db:
+        scan2, _ = main_module._scan_and_store(db, fake_scanner, content2, "r2.bin", False)
+    statuses = {e["name"]: e["status"] for e in scan2.engines or []}
+    assert statuses["ClamAV (fake)"] == "done"
+    assert statuses["YARA (daemon)"] == "unavailable"
+    assert statuses["Domain feed (fake)"] == "unavailable"
+    assert scan2.status == "done"
+
+
 def test_scanning_engines_includes_domain_feed(client, monkeypatch):
     monkeypatch.setattr(main_module, "get_domain_feed", lambda: FakeFeed())
     names = [e["name"] for e in main_module._scanning_engines()]
