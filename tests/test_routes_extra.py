@@ -693,6 +693,147 @@ def test_upload_scans_ttl_zero_deletes_record_after_scan(client, monkeypatch):
     assert not (Path(settings.upload_dir) / sha).exists()  # sample deleted with the record
 
 
+def _add_scan_row(sha, status="done"):
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha,
+                md5="0" * 32,
+                sha1="0" * 40,
+                file_name="s.bin",
+                size=1,
+                file_type="data",
+                magic_hex="",
+                verdict="clean" if status == "done" else "pending",
+                status=status,
+                engine="x",
+                urls=[],
+            )
+        )
+        db.commit()
+
+
+def test_purge_uploads_keeps_sample_of_active_scan(tmp_path, monkeypatch):
+    # a sample whose scan is enqueued/running (or whose row is still pending) must
+    # survive even UPLOADS_TTL=0 — the in-flight scan still reads it by path
+    from app.db import SessionLocal
+    from app.main import (
+        _prune_uploads,
+        _sample_in_use,
+        _scan_finished,
+        _scan_started,
+    )
+    from app.models import Scan
+
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "uploads_ttl", 0)
+    sha = "ab" * 32
+    sample = tmp_path / sha
+    sample.write_bytes(b"in flight")
+    _add_scan_row(sha, status="pending")
+
+    _scan_started(sha)  # a scan is running for this hash
+    with SessionLocal() as db:
+        assert _sample_in_use(sha, db) is True
+        assert _sample_in_use(sha, db, ignore=1) is True  # row still pending
+        assert _sample_in_use("cd" * 32, db) is False  # no row, no scans
+    _prune_uploads()
+    assert sample.exists()  # in-flight: kept
+
+    _scan_finished(sha)  # scan done, but the row is still pending
+    with SessionLocal() as db:
+        assert _sample_in_use(sha, db) is True  # pending row protects it
+    _prune_uploads()
+    assert sample.exists()
+
+    with SessionLocal() as db:  # row finished -> no longer protected
+        row = db.get(Scan, sha)
+        assert row is not None
+        row.status = "done"
+        db.commit()
+    _prune_uploads()
+    assert not sample.exists()
+
+
+def test_prune_scans_keeps_rescan_enqueued_mid_prune(client, monkeypatch):
+    # a rescan enqueued while the TTL sweep runs must keep its record AND sample
+    from datetime import UTC, datetime, timedelta
+
+    from app.main import _prune_scans, _scan_finished, _scan_started
+
+    sha = "ef" * 32
+    _add_scan_row(sha, status="done")
+    from app.db import SessionLocal
+    from app.models import Scan  # noqa: F811
+
+    with SessionLocal() as db:
+        row = db.get(Scan, sha)
+        assert row is not None
+        row.scanned_at = datetime.now(UTC) - timedelta(minutes=10)
+        db.commit()
+    sample = Path(settings.upload_dir) / sha
+    sample.write_bytes(b"rescan me")
+    monkeypatch.setattr(settings, "scans_ttl", 0)
+
+    _scan_started(sha)  # concurrent rescan in flight
+    _prune_scans()
+    with SessionLocal() as db:
+        assert db.get(Scan, sha) is not None
+    assert sample.exists()
+
+    _scan_finished(sha)  # no other scan running anymore
+    _prune_scans()
+    with SessionLocal() as db:
+        assert db.get(Scan, sha) is None
+    assert not sample.exists()
+
+
+def test_run_scan_ttl_zero_keeps_sample_while_rescan_in_flight(client, monkeypatch, tmp_path):
+    # UPLOADS_TTL=0 must not delete the stored sample while ANOTHER scan for the
+    # same hash is still running — that race made clamd's FILDES os.open() fail
+    import app.main as main_module
+
+    monkeypatch.setattr(settings, "uploads_ttl", 0)
+    content = b"raced sample"
+    sha = hashlib.sha256(content).hexdigest()
+    stored = Path(settings.upload_dir) / sha
+    stored.write_bytes(content)
+
+    main_module._scan_started(sha)  # the current scan's own reference
+    main_module._scan_started(sha)  # a concurrent rescan of the same hash
+    main_module._run_scan(content, "raced.bin", path=stored)
+    assert stored.exists()  # concurrent scan still needs the file
+
+    main_module._scan_finished(sha)  # the other scan finished
+    main_module._run_scan(content, "raced.bin", path=stored)
+    assert not stored.exists()  # last scan out deletes it
+    main_module._scan_finished(sha)
+
+
+def test_enqueue_marks_sample_in_flight_until_task_finishes(client, tmp_path):
+    from fastapi import BackgroundTasks
+
+    import app.main as main_module
+    from app.analysis import compute_hashes
+
+    content = b"enqueue guard sample"
+    hashes = compute_hashes(content)
+    path = Path(settings.upload_dir) / hashes["sha256"]
+    path.write_bytes(content)
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        main_module._enqueue_scan_file(BackgroundTasks(), db, path, hashes, "g.bin")
+        assert main_module._scans_in_flight[hashes["sha256"]] == 1  # protected at enqueue
+    # ... the background task runs and releases the reference
+    # (covered end-to-end by the client upload tests; here just release manually)
+    main_module._scan_finished(hashes["sha256"])
+    assert hashes["sha256"] not in main_module._scans_in_flight
+
+
 def test_privacy_policy_scans_ttl_sentence_reflects_setting(client, monkeypatch):
     from app.config import settings as s
 

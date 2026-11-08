@@ -115,6 +115,7 @@ def _recover_pending_scans() -> None:
             stored = Path(settings.upload_dir) / scan.sha256
             if stored.exists():
                 rerun += 1
+                _scan_started(scan.sha256)
                 threading.Thread(
                     target=_run_scan_file, args=(stored, scan.file_name), daemon=True
                 ).start()
@@ -268,9 +269,11 @@ def _prune_uploads() -> None:
     ttl = settings.uploads_ttl
     if ttl < 0:
         return
-    for f in upload_dir.iterdir():
-        if f.is_file() and (ttl == 0 or now - f.stat().st_mtime > ttl * 60):
-            f.unlink(missing_ok=True)
+    with SessionLocal() as db:
+        for f in upload_dir.iterdir():
+            if f.is_file() and (ttl == 0 or now - f.stat().st_mtime > ttl * 60):
+                if not _sample_in_use(f.name, db):  # an active scan still needs it
+                    f.unlink(missing_ok=True)
 
 
 def _prune_scans() -> None:
@@ -289,6 +292,8 @@ def _prune_scans() -> None:
             if scanned_at.tzinfo is None:  # SQLite hands back naive datetimes
                 scanned_at = scanned_at.replace(tzinfo=UTC)
             if ttl == 0 or (now - scanned_at) > timedelta(minutes=ttl):
+                if _sample_in_use(row.sha256, db):  # a rescan got enqueued meanwhile
+                    continue
                 (Path(settings.upload_dir) / row.sha256).unlink(missing_ok=True)
                 db.delete(row)
         db.commit()
@@ -296,6 +301,38 @@ def _prune_scans() -> None:
 
 _rate_buckets: dict[str, tuple[float, int]] = {}
 _rate_lock = threading.Lock()
+
+_scans_in_flight: dict[str, int] = {}
+_scans_in_flight_lock = threading.Lock()
+
+
+def _scan_started(sha256: str) -> None:
+    """Register an enqueued/running scan for a hash — from enqueue time until the
+    background task finishes, so TTL cleanup never deletes a sample still in use."""
+    with _scans_in_flight_lock:
+        _scans_in_flight[sha256] = _scans_in_flight.get(sha256, 0) + 1
+
+
+def _scan_finished(sha256: str) -> None:
+    with _scans_in_flight_lock:
+        left = _scans_in_flight.get(sha256, 1) - 1
+        if left > 0:
+            _scans_in_flight[sha256] = left
+        else:
+            _scans_in_flight.pop(sha256, None)
+
+
+def _sample_in_use(sha256: str, db: Session, ignore: int = 0) -> bool:
+    """True while a scan for this hash is enqueued/running (beyond `ignore` own
+    references) or its row is still 'pending' — such a sample is still being read
+    or scanned by path and must not be deleted."""
+    with _scans_in_flight_lock:
+        if _scans_in_flight.get(sha256, 0) > ignore:
+            return True
+    row = db.execute(
+        select(Scan).where(Scan.sha256 == sha256).execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    return row is not None and row.status == "pending"
 
 
 def _rate_limit_host(host: str, limit: int, kind: str) -> None:
@@ -620,11 +657,16 @@ def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
         scan.verdict,
         scan.signature,
     )
-    if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
-        (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
-    if settings.scans_ttl == 0:  # delete the scan record (and sample) right after the scan
-        (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
-        with SessionLocal() as db:
+    with SessionLocal() as db:
+        # ignore this scan's own in-flight reference: delete only when no OTHER
+        # scan for the same hash is enqueued/running (a concurrent rescan would
+        # still be reading the stored sample)
+        if _sample_in_use(scan.sha256, db, ignore=1):
+            return
+        if settings.uploads_ttl == 0:  # delete the stored sample immediately after the scan
+            (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
+        if settings.scans_ttl == 0:  # delete the scan record (and sample) right after the scan
+            (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
             row = db.get(Scan, scan.sha256)
             if row is not None:
                 db.delete(row)
@@ -638,6 +680,8 @@ def _run_scan_file(path: Path, file_name: str) -> None:
         _run_scan(path.read_bytes(), file_name, path=path)
     except Exception:
         logger.exception("scan of stored file failed: %s", path)
+    finally:
+        _scan_finished(path.name)
 
 
 def _enqueue_scan(
@@ -703,6 +747,7 @@ def _enqueue_scan_file(
         )
         db.add(scan)
     db.commit()
+    _scan_started(hashes["sha256"])  # protect the sample until the scan task finishes
     if background_tasks is not None:
         background_tasks.add_task(_run_scan_file, path, file_name)
     else:
