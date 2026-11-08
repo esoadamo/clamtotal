@@ -56,7 +56,6 @@ test('modal functions are safe without a document', () => {
   assert.doesNotThrow(() => CT.closeModal());
   assert.doesNotThrow(() => CT.initTabs());
   assert.doesNotThrow(() => CT.initPolling());
-  assert.doesNotThrow(() => CT.initRescan());
   assert.doesNotThrow(() => CT.initUpload());
 });
 
@@ -484,15 +483,23 @@ test('uploadStatusText shows upload progress, then Combining once all bytes are 
   assert.equal(CT.uploadStatusText('a.bin', 100), 'Combining a.bin…');
 });
 
-function stubRescanDom(sha) {
-  const btn = { dataset: { sha, chunkSize: '0' }, listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
-  const input = { files: [], value: 'x', clicked: false, click() { this.clicked = true; }, listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
-  const els = { 'rescan-btn': btn, 'rescan-input': input };
+function stubUploadDom(rescanSha) {
+  const mk = () => ({ style: {}, dataset: {}, listeners: {}, files: [], value: '', addEventListener(ev, fn) { this.listeners[ev] = fn; } });
+  const form = mk();
+  form.action = '/file/upload';
+  form.dataset.chunkSize = '0';
+  form.dataset.wsUpload = '0';
+  form.dataset.rescanSha = rescanSha || '';
+  const els = {
+    dropzone: mk(), 'upload-form': form, 'file-input': mk(),
+    'dz-idle': mk(), 'dz-progress': mk(), 'dz-spinner': mk(), 'dz-status': mk(),
+    'progress-bar': mk(), 'dz-error': mk(),
+  };
   ['modal-overlay', 'modal-title', 'modal-body'].forEach((id) => {
     els[id] = { classList: { _c: null, add(c) { this._c = c; }, remove() { this._c = null; } }, textContent: '', innerHTML: '' };
   });
   globalThis.document = { getElementById: (id) => els[id] || null };
-  return { btn, input, els };
+  return { els, form, input: els['file-input'] };
 }
 
 function stubFileReaderAndXhr(onSend) {
@@ -510,18 +517,17 @@ function stubFileReaderAndXhr(onSend) {
   };
 }
 
-test('initRescan opens a file dialog, verifies the hash and uploads with rescan=true', async () => {
+test('initUpload with reanalyze target uploads the matching file with rescan=true', async () => {
   const content = new TextEncoder().encode('rescan me please');
   const sha = CT.sha256HexPure(content);
-  const { btn, input, els } = stubRescanDom(sha);
+  const { els, input } = stubUploadDom(sha);
   let sent = null;
   stubFileReaderAndXhr((xhr) => { sent = xhr; });
   globalThis.location = { href: '' };
+  globalThis.setInterval = () => 1; // stall-render ticker used by startUpload
+  globalThis.clearInterval = () => {};
 
-  CT.initRescan();
-  btn.listeners.click();
-  assert.equal(input.clicked, true); // file dialog opened
-
+  CT.initUpload();
   const file = { name: 'orig.bin', size: content.length, slice: (a, b) => ({ size: b - a, _buf: content.slice(a, b) }) };
   input.files = [file];
   input.listeners.change();
@@ -531,20 +537,21 @@ test('initRescan opens a file dialog, verifies the hash and uploads with rescan=
   assert.equal(sent._url, '/file/upload?rescan=true');
   assert.equal(sent._fd._d.file, file);
   assert.equal(globalThis.location.href, '/ui/file/' + sha); // back to the report
-  assert.doesNotMatch(els['modal-body'].innerHTML, /does not match/);
+  assert.doesNotMatch(els['dz-error'].textContent || '', /does not match/);
 
   delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
   delete globalThis.XMLHttpRequest; delete globalThis.location;
+  delete globalThis.setInterval; delete globalThis.clearInterval;
 });
 
-test('initRescan rejects a file whose hash does not match the report', async () => {
+test('initUpload with reanalyze target rejects a file whose hash does not match', async () => {
   const sha = 'ab'.repeat(32);
-  const { btn, input, els } = stubRescanDom(sha);
+  const { els, input } = stubUploadDom(sha);
   let sent = null;
   stubFileReaderAndXhr((xhr) => { sent = xhr; });
   globalThis.location = { href: '' };
 
-  CT.initRescan();
+  CT.initUpload();
   const wrong = new TextEncoder().encode('different content entirely');
   const file = { name: 'wrong.bin', size: wrong.length, slice: (a, b) => ({ size: b - a, _buf: wrong.slice(a, b) }) };
   input.files = [file];
@@ -552,7 +559,7 @@ test('initRescan rejects a file whose hash does not match the report', async () 
   await new Promise((r) => setTimeout(r, 50));
 
   assert.equal(sent, null); // no upload happened
-  assert.match(els['modal-body'].innerHTML, /does not match/);
+  assert.match(els['dz-error'].textContent, /does not match/);
   assert.equal(globalThis.location.href, '');
 
   delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;

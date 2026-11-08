@@ -43,6 +43,19 @@ def test_home_upload_contract(client):
         'data-ws-chunk-size="',
     ]:
         assert marker in home, marker
+    assert 'data-rescan-sha=""' in home  # plain visit: no reanalyze target
+    assert 'id="reanalyze-note"' not in home
+
+
+def test_home_reanalyze_param_sets_rescan_target(client):
+    sha = "ab" * 32
+    home = client.get(f"/ui/?reanalyze={sha}").text
+    assert f'data-rescan-sha="{sha}"' in home  # upload UI verifies the hash + rescan=true
+    assert 'id="reanalyze-note"' in home and sha in home
+    # junk params are ignored
+    home = client.get("/ui/?reanalyze=<script>").text
+    assert 'data-rescan-sha=""' in home
+    assert 'id="reanalyze-note"' not in home
 
 
 def test_pending_report_contract(client, monkeypatch):
@@ -330,7 +343,7 @@ def test_download_button_disabled_when_sample_expired(client):
     assert f'href="/ui/file/{sha}/download"' in page  # enabled while the file is on disk
     # while the sample exists, Reanalyze is the classic form POST
     assert f'action="/ui/file/{sha}/rescan"' in page
-    assert 'id="rescan-btn"' not in page
+    assert f'href="/ui/?reanalyze={sha}"' not in page
 
     (Path(settings.upload_dir) / sha).unlink()  # simulate TTL expiry removing the file
     resp = client.get(f"/ui/file/{sha}")
@@ -338,11 +351,9 @@ def test_download_button_disabled_when_sample_expired(client):
     page = resp.text
     assert f'href="/ui/file/{sha}/download"' not in page
     assert 'disabled title="The file is already expired and deleted"' in page
-    # ...and Reanalyze becomes a file dialog that re-uploads the file with rescan=true
+    # ...and Reanalyze links back to the main upload UI, which verifies the hash
     assert f'action="/ui/file/{sha}/rescan"' not in page
-    assert 'id="rescan-btn"' in page and f'data-sha="{sha}"' in page
-    assert 'data-chunk-size="' in page
-    assert 'id="rescan-input"' in page
+    assert f'href="/ui/?reanalyze={sha}"' in page
     assert client.get(f"/ui/file/{sha}/download").status_code == 404
     # the scan record is kept in the database, only the file was removed
     from app.db import SessionLocal

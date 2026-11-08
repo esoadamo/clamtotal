@@ -617,6 +617,11 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
         if settings.show_recent_scans
         else []
     )
+    # "Reanalyze" on a report whose sample expired links here: the upload UI then
+    # verifies the chosen file's SHA-256 against this hash and re-uploads with rescan=true
+    reanalyze = request.query_params.get("reanalyze", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", reanalyze.lower()):
+        reanalyze = ""
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -625,6 +630,7 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
             "chunk_size": settings.chunk_upload_size,
             "ws_enabled": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
             "ws_chunk_size": settings.ws_chunk_size,
+            "reanalyze": reanalyze,
         },
     )
 
@@ -1088,7 +1094,6 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             "pending": pending,
             "poll_interval": settings.scan_poll_interval_ms,
             "domain_results": domain_results,
-            "chunk_size": settings.chunk_upload_size,
         },
     )
 
