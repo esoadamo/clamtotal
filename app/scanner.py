@@ -104,8 +104,12 @@ class ClamdScanner:
         return response.decode(errors="replace").replace("\x00", "").strip() or None
 
     def scan(self, data: bytes, path: Path | None = None) -> ScanResult:
-        if path is not None and settings.clamd_socket:
-            return self._scan_fd(path)
+        if path is not None and settings.clamd_socket and path.exists():
+            try:
+                return self._scan_fd(path)
+            except FileNotFoundError:
+                pass  # sample deleted between exists() and open() (TTL cleanup, a
+                # concurrent rescan of the same hash) — the bytes are in memory, scan those
         if len(data) > settings.stream_scan_max_size:
             return self._scan_file(data)
         return self._scan_stream(data)
@@ -502,6 +506,19 @@ class YaraScanner:
             return []
         # match by filepath (mmap) when the sample is on disk, else in-memory bytes
         use_path = path is not None and path.exists()
+        try:
+            return self._match_all(rules_list, data, path, use_path)
+        except ScannerTimeoutError:
+            raise
+        except ScannerUnavailableError:
+            if not use_path:
+                raise
+            # sample deleted between exists() and the mmap — rescan the in-memory bytes
+            return self._match_all(rules_list, data, path, False)
+
+    def _match_all(
+        self, rules_list: list, data: bytes, path: Path | None, use_path: bool
+    ) -> list[str]:
         if len(rules_list) == 1:
             matches = self._match_one(rules_list[0], data, path, use_path)
             return sorted({m.rule for m in matches})
@@ -629,15 +646,24 @@ class YaraDaemonClient:
 
     def scan(self, data: bytes, path: Path | None = None) -> list[str]:
         if path is not None and path.exists():
-            resp = self._roundtrip(b"zSCANPATH " + str(path).encode() + b"\0")
-        else:
-            with self._connect() as sock:
-                sock.sendall(b"zINSTREAM\0")
-                for offset in range(0, len(data), 64 * 1024):
-                    chunk = data[offset : offset + 64 * 1024]
-                    sock.sendall(struct.pack(">I", len(chunk)) + chunk)
-                sock.sendall(struct.pack(">I", 0))
-                resp = self._recv_response(sock)
+            try:
+                return self._parse_matches(
+                    self._roundtrip(b"zSCANPATH " + str(path).encode() + b"\0")
+                )
+            except (ScannerUnavailableError, OSError):
+                pass  # sample deleted between exists() and the daemon's mmap (TTL
+                # cleanup, concurrent rescan) — fall back to scanning the bytes
+        with self._connect() as sock:
+            sock.sendall(b"zINSTREAM\0")
+            for offset in range(0, len(data), 64 * 1024):
+                chunk = data[offset : offset + 64 * 1024]
+                sock.sendall(struct.pack(">I", len(chunk)) + chunk)
+            sock.sendall(struct.pack(">I", 0))
+            resp = self._recv_response(sock)
+        return self._parse_matches(resp)
+
+    @staticmethod
+    def _parse_matches(resp: bytes) -> list[str]:
         if resp.startswith(b"ERROR"):
             raise ScannerUnavailableError(resp.decode(errors="replace"))
         try:

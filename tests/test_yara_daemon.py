@@ -39,6 +39,34 @@ def daemon(tmp_path):
     reset_yara_cache()
 
 
+class _FakeSock:
+    """Minimal socket stand-in for YaraDaemonClient._connect(): records sent bytes,
+    replays a fixed NUL-terminated response."""
+
+    def __init__(self, response):
+        self.response = response
+        self.sent = b""
+
+    def settimeout(self, t):
+        pass
+
+    def sendall(self, data):
+        self.sent += data
+
+    def recv(self, n):
+        chunk, self.response = self.response[:n], self.response[n:]
+        return chunk
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
 def _raw(sock_path, payload, read=True):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.connect(sock_path)
@@ -112,33 +140,66 @@ def test_scan_by_path_and_by_instream(daemon, tmp_path):
     assert client.scan(b"nothing here") == []
 
 
-def test_scan_error_response_raises(daemon, monkeypatch, tmp_path):
+def test_scan_error_response_raises(daemon, monkeypatch):
+    client = YaraDaemonClient(daemon[1])
+    monkeypatch.setattr(client, "_connect", lambda: _FakeSock(b"ERROR broken rule\x00"))
+    with pytest.raises(ScannerUnavailableError, match="ERROR broken rule"):
+        client.scan(b"data")  # INSTREAM branch parses the ERROR reply
+
+
+def test_client_scan_falls_back_to_instream_when_scanpath_fails(daemon, monkeypatch, tmp_path):
+    # the sample vanished between the client's exists() check and the daemon's mmap:
+    # zSCANPATH fails, the client must rescan the in-memory bytes via zINSTREAM
     client = YaraDaemonClient(daemon[1])
     sample = tmp_path / "s.bin"
-    sample.write_bytes(b"x")
-    monkeypatch.setattr(client, "_roundtrip", lambda payload: b"ERROR broken rule")
-    with pytest.raises(ScannerUnavailableError, match="ERROR broken rule"):
-        client.scan(b"data", path=sample)  # path branch goes through _roundtrip
+    sample.write_bytes(b"data")
+
+    def boom(payload, timeout=None):
+        raise ScannerUnavailableError("ERROR could not open file")
+
+    monkeypatch.setattr(client, "_roundtrip", boom)
+    monkeypatch.setattr(client, "_connect", lambda: _FakeSock(b'["R1"]\x00'))
+    assert client.scan(b"data", path=sample) == ["R1"]
 
 
-def test_scan_garbled_response_raises(daemon, monkeypatch, tmp_path):
+def test_scan_garbled_response_raises(daemon, monkeypatch):
     # daemon died mid-scan without answering (empty reply) or sent garbage:
     # the client must raise ScannerUnavailableError, not json.JSONDecodeError
     client = YaraDaemonClient(daemon[1])
-    sample = tmp_path / "s.bin"
-    sample.write_bytes(b"x")
-    for garbage in (b"", b"not json"):
-        monkeypatch.setattr(client, "_roundtrip", lambda payload, g=garbage: g)
+    for garbage in (b"\x00", b"not json\x00"):
+        monkeypatch.setattr(client, "_connect", lambda g=garbage: _FakeSock(g))
         with pytest.raises(ScannerUnavailableError, match="invalid response"):
-            client.scan(b"data", path=sample)
+            client.scan(b"data")
 
 
-def test_scanpath_unreadable_file_replies_error(daemon, tmp_path):
-    # the sample became unreadable between the client's path.exists() check and the
-    # daemon's mmap (e.g. TTL cleanup deleted it): a directory deterministically makes
-    # yara raise "could not open file" — the daemon answers ERROR instead of dying
-    rules, sock_path = daemon
-    resp = _raw(sock_path, b"zSCANPATH " + str(rules).encode() + b"\0")
+def test_scanpath_scan_failure_replies_error_over_socket(tmp_path, monkeypatch):
+    # a scan failure that is NOT the vanished-file fallback (which the in-process
+    # YaraScanner already retries on the bytes) must come back as an ERROR reply,
+    # not kill the handler thread silently
+    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+
+    from app.scanner import YaraScanner
+
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "r.yar").write_text("rule R1 { condition: true }")
+    sock_path = str(tmp_path / "y.sock")
+
+    def boom(self, data, path=None):
+        raise yara.Error("could not open file /x")
+
+    monkeypatch.setattr(YaraScanner, "scan", boom)
+    threading.Thread(target=serve, args=(str(rules), sock_path), daemon=True).start()
+    for _ in range(100):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.connect(sock_path)
+            break
+        except OSError:
+            time.sleep(0.05)
+    else:
+        pytest.fail("yara daemon did not start")
+    resp = _raw(sock_path, b"zSCANPATH /x\0")
     assert resp.startswith(b"ERROR ")
     assert "could not open file" in resp.decode(errors="replace")
 

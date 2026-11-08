@@ -88,6 +88,36 @@ def test_clamd_fdpass_over_unix_socket(monkeypatch, tmp_path):
     assert any(c[0] == socket.SOL_SOCKET and c[1] == socket.SCM_RIGHTS for c in fake.cmsgs)
 
 
+def test_clamd_scan_falls_back_to_stream_when_sample_vanished(monkeypatch, tmp_path):
+    # the stored sample can be deleted between the background read and the scan
+    # (TTL cleanup / a concurrent rescan of the same hash): with CLAMD_SOCKET set,
+    # scan() must then use INSTREAM on the in-memory bytes instead of dying on
+    # os.open() in _scan_fd
+    import os
+
+    monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
+    gone = tmp_path / "gone.bin"
+    fake = FakeSocket(b"stream: OK\x00")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake)
+    result = ClamdScanner().scan(b"data", path=gone)  # path no longer exists
+    assert result.verdict == "clean"
+    assert fake.sent.startswith(b"zINSTREAM\0")
+
+    # path existed at the exists() check but vanished before os.open()
+    p = tmp_path / "race.bin"
+    p.write_bytes(b"data")
+
+    def boom(path, flags):
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    monkeypatch.setattr(os, "open", boom)
+    fake2 = FakeSocket(b"stream: Win.Test.EICAR_HDB-1 FOUND\x00")
+    monkeypatch.setattr(socket, "socket", lambda family, type_: fake2)
+    result2 = ClamdScanner().scan(b"EICAR", path=p)
+    assert result2.verdict == "infected" and result2.signature == "Win.Test.EICAR_HDB-1"
+    assert fake2.sent.startswith(b"zINSTREAM\0")
+
+
 def test_clamd_fdpass_infected_and_error(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "clamd_socket", "/tmp/clamd.sock")
     p = tmp_path / "e.bin"
@@ -808,6 +838,24 @@ def test_yara_scan_match_timeout_raises_scanner_timeout(tmp_path, monkeypatch, c
         with pytest.raises(ScannerTimeoutError, match="YARA_MATCH_TIMEOUT"):
             scanner.scan(b"x")
     assert "timed out" in caplog.text
+
+
+def test_yara_scan_rescans_bytes_when_sample_vanished_mid_scan(tmp_path):
+    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+
+    (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
+    scanner = YaraScanner(str(tmp_path))
+
+    class VanishRules:
+        def match(self, **kwargs):
+            if "filepath" in kwargs:
+                raise yara.Error('could not open file "/gone"')  # deleted after exists()
+            return [type("M", (), {"rule": "R1"})()]
+
+    scanner._rules = [VanishRules()]
+    p = tmp_path / "s.bin"
+    p.write_bytes(b"x")
+    assert scanner.scan(b"x", path=p) == ["R1"]  # fell back to the in-memory bytes
 
 
 def test_yara_scan_yara_error_raises_scanner_unavailable(tmp_path):
