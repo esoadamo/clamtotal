@@ -176,7 +176,7 @@ def test_scanpath_scan_failure_replies_error_over_socket(tmp_path, monkeypatch):
     # a scan failure that is NOT the vanished-file fallback (which the in-process
     # YaraScanner already retries on the bytes) must come back as an ERROR reply,
     # not kill the handler thread silently
-    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
     from app.scanner import YaraScanner
 
@@ -205,7 +205,7 @@ def test_scanpath_scan_failure_replies_error_over_socket(tmp_path, monkeypatch):
 
 
 def test_handle_conn_scan_error_reply_and_send_failure(monkeypatch):
-    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
     class BoomScanner:
         engine = "YARA (local rules)"

@@ -22,7 +22,7 @@ import struct
 import threading
 from pathlib import Path
 
-import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
 from app.scanner import YaraScanner, rss_mb
 

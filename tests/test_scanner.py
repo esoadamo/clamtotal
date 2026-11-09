@@ -824,7 +824,7 @@ def test_yara_scanner_skips_rule_groups_over_rss_budget(tmp_path, monkeypatch, c
 def test_yara_scan_match_timeout_raises_scanner_timeout(tmp_path, monkeypatch, caplog):
     import logging
 
-    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
     (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
     scanner = YaraScanner(str(tmp_path))
@@ -841,7 +841,7 @@ def test_yara_scan_match_timeout_raises_scanner_timeout(tmp_path, monkeypatch, c
 
 
 def test_yara_scan_rescans_bytes_when_sample_vanished_mid_scan(tmp_path):
-    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
     (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
     scanner = YaraScanner(str(tmp_path))
@@ -859,7 +859,7 @@ def test_yara_scan_rescans_bytes_when_sample_vanished_mid_scan(tmp_path):
 
 
 def test_yara_scan_yara_error_raises_scanner_unavailable(tmp_path):
-    import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
     (tmp_path / "r.yar").write_text("rule R1 { condition: true }")
     scanner = YaraScanner(str(tmp_path))

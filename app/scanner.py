@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
-import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 
 from app.config import settings
 

@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import yara  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+import yara  # ty: ignore[import-not-found]  # compiled extension, no stubs
 from anyio import to_thread
 from fastapi import (
     BackgroundTasks,
@@ -217,7 +217,7 @@ def _custom_openapi() -> dict:
     return schema
 
 
-app.openapi = _custom_openapi  # type: ignore
+app.openapi = _custom_openapi
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 
