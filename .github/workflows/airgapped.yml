@@ -1,0 +1,50 @@
+name: airgapped-image
+
+# Builds the AIRGAPPED variant of the image (all signatures — official ClamAV via
+# freshclam, unofficial via fangfrisch, third-party YARA rules, domain feed — baked
+# in at BUILD time) and publishes it to GHCR as :airgapped-latest. Runs on every
+# push to main and every 3 days on a schedule so airgapped deployments always get a
+# fresh signature set. Runtime stays offline: run it with CLAM_AUTOUPDATE=false.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # every 3 days at 00:00 UTC
+    - cron: "0 0 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  build-airgapped:
+    name: Build and publish airgapped image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # push the image to GHCR
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false  # avoid artipacked credential persistence
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish airgapped image to GHCR
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile  # the image manifest is a Containerfile, not Dockerfile
+          push: true
+          build-args: AIRGAPPED=true  # bake all signatures into the image at build time
+          tags: ghcr.io/${{ github.repository_owner }}/clamtotal:airgapped-latest

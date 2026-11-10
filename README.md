@@ -76,6 +76,27 @@ On every push to `main` where all tests pass, CI builds and publishes the image 
 `ghcr.io/<owner>/clamtotal:latest` (plus a per-commit SHA tag). Pull with:
 `podman pull ghcr.io/<owner>/clamtotal:latest`.
 
+### Airgapped image
+
+For fully airgapped deployments, build the image with **all signatures baked in at
+build time** (official ClamAV DBs via freshclam, unofficial DBs via fangfrisch,
+third-party YARA rules, and the domain feed) by passing `--build-arg AIRGAPPED=true`:
+
+```sh
+podman build --build-arg AIRGAPPED=true -t clamtotal:airgapped .
+podman run -e CLAM_AUTOUPDATE=false -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal:airgapped
+```
+
+At runtime the autoupdater is disabled (`CLAM_AUTOUPDATE=false`), so the container
+never downloads anything. CI also builds and publishes this variant automatically —
+on every push to `main` and every 3 days — to GHCR as
+`ghcr.io/<owner>/clamtotal:airgapped-latest`:
+
+```sh
+podman pull ghcr.io/<owner>/clamtotal:airgapped-latest
+podman run -e CLAM_AUTOUPDATE=false -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/<owner>/clamtotal:airgapped-latest
+```
+
 ## Podman (container mode with clamd)
 
 ```sh
