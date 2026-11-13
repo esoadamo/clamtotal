@@ -25,9 +25,9 @@ Features (all fully offline, no login, no community features):
   second engine: **local YARA rules** (`yara-python`, `YARA_RULES_DIR`)
 - ClamAV signature **autoupdater** in the container: `freshclam` (official) +
   unofficial DBs via fangfrisch (SaneSecurity, which includes YARA rules that
-  clamd loads natively) — every 6h by default; disable with
-  `CLAM_AUTOUPDATE=false` for airgapped operation and bake signatures in at
-  build time (`--build-arg AIRGAPPED=true`)
+  clamd loads natively) — every 6h by default; for airgapped operation bake
+  signatures in at build time (`--build-arg AIRGAPPED=true`) — the resulting
+  image automatically defaults `CLAM_AUTOUPDATE=false`, no `-e` flag needed
 - SQLite storage via SQLAlchemy + Alembic; scan results are cached by SHA-256
   (re-uploading the same file returns the cached report instantly)
 - Hashes: MD5, SHA-1, SHA-256, SHA-512, CRC32, plus PE imphash
@@ -80,22 +80,58 @@ On every push to `main` where all tests pass, CI builds and publishes the image 
 
 For fully airgapped deployments, build the image with **all signatures baked in at
 build time** (official ClamAV DBs via freshclam, unofficial DBs via fangfrisch,
-third-party YARA rules, and the domain feed) by passing `--build-arg AIRGAPPED=true`:
+third-party YARA rules, and the domain feed) by passing `--build-arg AIRGAPPED=true`.
+The build **fails if no signature databases could be downloaded**, so a broken
+image can never be published, and the resulting image automatically defaults
+`CLAM_AUTOUPDATE=false` — no `-e` flag needed at run time:
 
 ```sh
 podman build --build-arg AIRGAPPED=true -t clamtotal:airgapped .
-podman run -e CLAM_AUTOUPDATE=false -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal:airgapped
+podman run --rm --net=none -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal:airgapped
 ```
 
-At runtime the autoupdater is disabled (`CLAM_AUTOUPDATE=false`), so the container
-never downloads anything. CI also builds and publishes this variant automatically —
-on every push to `main` and every 3 days — to GHCR as
-`ghcr.io/<owner>/clamtotal:airgapped-latest`:
+CI also builds and publishes this variant automatically — on every push to `main`
+and every 3 days — to GHCR as
+`ghcr.io/esoadamo/clamtotal:airgapped-latest`:
 
 ```sh
-podman pull ghcr.io/<owner>/clamtotal:airgapped-latest
-podman run -e CLAM_AUTOUPDATE=false -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/<owner>/clamtotal:airgapped-latest
+podman run --rm --net=none -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
 ```
+
+> **Note — `--net=none` discards `-p`:** with no network stack there is nothing to
+> forward through, so Podman prints "Port mappings have been discarded ..." and the
+> web UI is unreachable from the host. To keep the container fully offline **and**
+> reach it on `127.0.0.1:8000`, use an internal network (rootless Podman forwards
+> published ports on `--internal` networks; rootful does not):
+>
+> ```sh
+> podman network create --internal clamtotal-airgap   # once
+> podman run --rm --network=clamtotal-airgap -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
+> ```
+
+#### Moving the airgapped image to another machine (offline transfer)
+
+Save the image to a tar archive on a machine that already has it, copy the tar
+over (USB drive, `scp`, ...) and load it on the target machine — no registry and
+no internet needed on either side:
+
+```sh
+# on the source machine
+podman save -o clamtotal-airgapped.tar ghcr.io/esoadamo/clamtotal:airgapped-latest
+# optionally compress it first (the image is several GB — signatures are baked in):
+#   xz -T0 clamtotal-airgapped.tar
+
+# ... copy clamtotal-airgapped.tar to the target machine ...
+
+# on the target machine
+podman load -i clamtotal-airgapped.tar
+podman run --rm --net=none -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
+```
+
+`podman load` restores the original image reference, so the `podman run` command
+is the same as on the source machine. If you compressed the archive, decompress
+first (`xz -d clamtotal-airgapped.tar.xz`) or run `podman load -i` on the `.tar`
+inside.
 
 ## Podman (container mode with clamd)
 

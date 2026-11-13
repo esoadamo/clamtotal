@@ -9,6 +9,10 @@
 # on first container launch instead.
 ARG AIRGAPPED=false
 FROM python:3.12-slim-bookworm
+# Re-declare: ARGs before FROM are only in scope for the FROM line itself, so
+# without this the stage never sees AIRGAPPED and silently builds the default
+# (no-signatures) variant.
+ARG AIRGAPPED=false
 
 # uv is not in the base image — install the official binary
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -55,7 +59,14 @@ RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-yara-rule
          /usr/local/bin/update-domain-feed.sh \
     && mkdir -p /var/lib/fangfrisch \
     && /app/.venv/bin/fangfrisch --conf /etc/fangfrisch.conf initdb \
-    && if [ "$AIRGAPPED" = "true" ]; then CLAM_AUTOUPDATE=true update-signatures.sh; \
+    && if [ "$AIRGAPPED" = "true" ]; then \
+         CLAM_AUTOUPDATE=true update-signatures.sh; \
+         find /var/lib/clamav -maxdepth 1 -type f \
+           \( -name '*.cvd' -o -name '*.cld' -o -name '*.ndb' -o -name '*.hdb' \
+           -o -name '*.ldb' -o -name '*.yar' -o -name '*.db' -o -name '*.mdb' \
+           -o -name '*.cdb' \) -print -quit | grep -q . \
+           || { echo 'FATAL: airgapped build produced no signature databases in /var/lib/clamav; refusing to publish a broken image' >&2; exit 1; }; \
+         touch /app/.airgapped; \
          YARA_RULES_DIR=/rules update-yara-rules.sh || true; \
          DOMAIN_FEED_DIR=/data/domain-feed update-domain-feed.sh || true; \
          else echo "default build: signatures are downloaded on first container launch"; fi

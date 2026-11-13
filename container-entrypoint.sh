@@ -14,6 +14,13 @@ sed -i -e "s/^#\\{0,1\\}StreamMaxLength.*/StreamMaxLength ${STREAM_SCAN_MAX_SIZE
 # App version stamped at image BUILD time (YYMMDD.hhmmss UTC), shown in the footer
 export APP_VERSION="${APP_VERSION:-$(cat /app/.build-version 2>/dev/null || echo dev)}"
 
+# Airgapped images (AIRGAPPED=true at build time) ship with all signatures baked in
+# and must never reach the network: default the autoupdater to OFF unless the user
+# explicitly overrides it, so no -e CLAM_AUTOUPDATE=false is needed at run time.
+if [ -f /app/.airgapped ]; then
+  export CLAM_AUTOUPDATE="${CLAM_AUTOUPDATE:-false}"
+fi
+
 # Self-heal: older images left fangfrisch's sqlite metadata DB inside clamd's DB dir,
 # which makes clamd abort with "Malformed database" — remove it if present.
 rm -f /var/lib/clamav/fangfrisch.db
