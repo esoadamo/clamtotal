@@ -83,11 +83,17 @@ build time** (official ClamAV DBs via freshclam, unofficial DBs via fangfrisch,
 third-party YARA rules, and the domain feed) by passing `--build-arg AIRGAPPED=true`.
 The build **fails if no signature databases could be downloaded**, so a broken
 image can never be published, and the resulting image automatically defaults
-`CLAM_AUTOUPDATE=false` — no `-e` flag needed at run time:
+`CLAM_AUTOUPDATE=false` — no `-e` flag needed at run time.
+
+Run it on an **internal Podman network**: `--internal` networks have no route to
+the internet (or the host), so the container stays fully offline, while rootless
+Podman still forwards published ports — unlike `--net=none`, which discards `-p`
+("Port mappings have been discarded...") and leaves the web UI unreachable.
 
 ```sh
+podman network create --internal clamtotal-airgap   # once
 podman build --build-arg AIRGAPPED=true -t clamtotal:airgapped .
-podman run --rm --net=none -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal:airgapped
+podman run --rm --network=clamtotal-airgap -p 127.0.0.1:8000:8000 -v clamtotal-data:/data clamtotal:airgapped
 ```
 
 CI also builds and publishes this variant automatically — on every push to `main`
@@ -95,19 +101,14 @@ and every 3 days — to GHCR as
 `ghcr.io/esoadamo/clamtotal:airgapped-latest`:
 
 ```sh
-podman run --rm --net=none -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
+podman network create --internal clamtotal-airgap   # once
+podman run --rm --network=clamtotal-airgap -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
 ```
 
-> **Note — `--net=none` discards `-p`:** with no network stack there is nothing to
-> forward through, so Podman prints "Port mappings have been discarded ..." and the
-> web UI is unreachable from the host. To keep the container fully offline **and**
-> reach it on `127.0.0.1:8000`, use an internal network (rootless Podman forwards
-> published ports on `--internal` networks; rootful does not):
->
-> ```sh
-> podman network create --internal clamtotal-airgap   # once
-> podman run --rm --network=clamtotal-airgap -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
-> ```
+> **Note:** port forwarding on `--internal` networks works with **rootless**
+> Podman (the default for personal machines). Rootful Podman does not forward
+> published ports on internal networks; if you run rootful, publish the port on
+> a non-internal network or put a reverse proxy in front.
 
 #### Moving the airgapped image to another machine (offline transfer)
 
@@ -125,7 +126,8 @@ podman save -o clamtotal-airgapped.tar ghcr.io/esoadamo/clamtotal:airgapped-late
 
 # on the target machine
 podman load -i clamtotal-airgapped.tar
-podman run --rm --net=none -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
+podman network create --internal clamtotal-airgap   # once, if not already created
+podman run --rm --network=clamtotal-airgap -p 127.0.0.1:8000:8000 -v clamtotal-data:/data ghcr.io/esoadamo/clamtotal:airgapped-latest
 ```
 
 `podman load` restores the original image reference, so the `podman run` command
