@@ -1,4 +1,9 @@
 import hashlib
+from pathlib import Path
+
+import pytest
+
+from app.analysis import shannon_entropy
 
 EICAR = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
@@ -114,3 +119,76 @@ def test_download_stored_sample(client):
     response = client.get(f"/ui/file/{sha256}/download")
     assert response.status_code == 200
     assert response.content == content
+
+
+def test_report_entropy_is_cached_at_scan_time(client):
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    content = clean_file(b"entropy")
+    sha256, _ = _upload(client, content, "entropy.bin")
+    with SessionLocal() as db:
+        scan = db.get(Scan, sha256)
+        assert scan is not None
+        assert scan.entropy == shannon_entropy(content)
+    report = client.get(f"/ui/file/{sha256}")
+    assert f"{shannon_entropy(content):.3f}" in report.text
+
+
+def _legacy_scan(sha256: str, content: bytes) -> None:
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha256,
+                md5=hashlib.md5(content).hexdigest(),
+                sha1=hashlib.sha1(content).hexdigest(),
+                file_name="legacy.bin",
+                size=len(content),
+                file_type="ASCII text",
+                magic_hex="",
+                verdict="clean",
+                status="done",
+                engine="clamscan",
+                urls=[],
+            )
+        )
+        db.commit()
+
+
+def test_report_legacy_row_computes_and_persists_entropy(client):
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    content = b"legacy row without stored entropy"
+    sha256 = hashlib.sha256(content).hexdigest()
+    _legacy_scan(sha256, content)
+    sample = Path(settings.upload_dir) / sha256
+    sample.parent.mkdir(exist_ok=True)
+    sample.write_bytes(content)
+    report = client.get(f"/ui/file/{sha256}")
+    assert report.status_code == 200
+    with SessionLocal() as db:
+        scan = db.get(Scan, sha256)
+        assert scan is not None
+        assert scan.entropy is not None
+        assert scan.entropy == pytest.approx(shannon_entropy(content))
+
+
+def test_report_legacy_row_without_sample_shows_zero_entropy(client):
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    content = b"legacy row whose sample expired"
+    sha256 = hashlib.sha256(content).hexdigest()
+    _legacy_scan(sha256, content)
+    report = client.get(f"/ui/file/{sha256}")
+    assert report.status_code == 200
+    assert "0.000" in report.text
+    with SessionLocal() as db:
+        scan = db.get(Scan, sha256)
+        assert scan is not None
+        assert scan.entropy is None

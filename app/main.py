@@ -45,6 +45,7 @@ from app.analysis import (
     parse_office,
     parse_pdf,
     parse_pe,
+    shannon_entropy,
     shannon_entropy_file,
     sniff_file_type,
 )
@@ -590,6 +591,7 @@ def _scan_and_store(
         file_name=file_name,
         names=sorted({file_name} | set((existing.names or []) if existing else [])),
         size=len(data),
+        entropy=shannon_entropy(data),
         file_type=file_type,
         magic_hex=magic_hex,
         verdict=verdict,
@@ -1084,7 +1086,16 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         )
     stored = Path(settings.upload_dir) / scan.sha256
     stored_exists = stored.exists()
-    entropy = shannon_entropy_file(stored) if stored_exists else 0.0
+    if scan.entropy is not None:
+        entropy = scan.entropy
+    elif stored_exists:
+        # legacy row scanned before the entropy column existed: compute once
+        # from the stored sample, persist, never re-read the file for it again
+        entropy = shannon_entropy_file(stored)
+        scan.entropy = entropy
+        db.commit()
+    else:
+        entropy = 0.0
     pending = scan.status != "done"
     # relations: shared IOCs + archive membership (this file embedded in another scan, or this
     # archive containing other scans) — all resolved locally by hash, VT-style

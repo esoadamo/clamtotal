@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -25,6 +25,9 @@ class Scan(Base):
         JSON, nullable=True
     )  # alternative names seen for this hash
     size: Mapped[int] = mapped_column(Integer)
+    entropy: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Shannon entropy of the sample, computed once at scan time
     file_type: Mapped[str] = mapped_column(String(128))
     magic_hex: Mapped[str] = mapped_column(String(64))
     verdict: Mapped[str] = mapped_column(
