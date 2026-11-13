@@ -610,6 +610,16 @@ def _scan_and_store(
     return scan, False
 
 
+def _human_size(n: int) -> str:
+    value = float(n)
+    units = ("B", "KB", "MB", "GB", "TB")
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024
+        idx += 1
+    return f"{round(value, 1):g} {units[idx]}"
+
+
 def _render_index(request: Request, db: Session) -> HTMLResponse:
     _rate_limit(request, settings.rate_limit_browse, "browse")
     recent = (
@@ -630,6 +640,7 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
             "chunk_size": settings.chunk_upload_size,
             "ws_enabled": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
             "ws_chunk_size": settings.ws_chunk_size,
+            "max_upload_size_human": _human_size(settings.max_upload_size),
             "reanalyze": reanalyze,
         },
     )

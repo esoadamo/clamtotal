@@ -30,7 +30,7 @@
               <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="#0f766e" stroke-width="1.6" stroke-linecap="round"/>
             </svg>
             <div class="dz-title">Drag and drop a file here to scan it</div>
-            <div>Maximum file size: 512 MB</div>
+            <div>Maximum file size: {{ max_upload_size_human }}</div>
             <div class="dz-or">or</div>
             <label class="btn" for="file-input">Choose file</label>
             <input id="file-input" type="file" name="file" required style="display:none">

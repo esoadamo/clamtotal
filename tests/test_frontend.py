@@ -47,6 +47,20 @@ def test_home_upload_contract(client):
     assert 'id="reanalyze-note"' not in home
 
 
+def test_home_shows_configured_max_upload_size(client, monkeypatch):
+    from app.main import _human_size
+
+    monkeypatch.setattr(settings, "max_upload_size", 21474836480)
+    home = client.get("/ui/").text
+    assert "Maximum file size: 20 GB" in home
+    assert "512 MB" not in home
+    monkeypatch.setattr(settings, "max_upload_size", 5 * 1024**2)
+    assert "Maximum file size: 5 MB" in client.get("/ui/").text
+    assert _human_size(512) == "512 B"
+    assert _human_size(1024) == "1 KB"
+    assert _human_size(1536) == "1.5 KB"
+
+
 def test_home_reanalyze_param_sets_rescan_target(client):
     sha = "ab" * 32
     home = client.get(f"/ui/?reanalyze={sha}").text

@@ -157,7 +157,7 @@ Feed updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=f
 | `UVICORN_WORKERS` | `2` in the container | uvicorn worker count; each worker is a separate process that compiles the full YARA rule set into its own RAM on first scan (the ClamAV DB is loaded once by clamd, not per worker) — too many workers on a small memory limit get OOM-killed on the first `/healthz`/upload (workers die with no traceback; check `[entrypoint] memory:`, per-worker `rss=`, and `podman inspect --format '{{.State.OOMKilled}}'`) |
 | `UVICORN_WORKER_HEALTHCHECK_TIMEOUT` | `120` | seconds the uvicorn parent waits for a worker healthcheck ping before SIGKILLing it (uvicorn default is 5 — too low for long scans) |
 | `UPLOAD_DIR` | `./uploads` | where uploaded samples are stored (by SHA-256) |
-| `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes |
+| `MAX_UPLOAD_SIZE` | `536870912` | max upload size in bytes (shown on the home page) |
 | `STREAM_SCAN_MAX_SIZE` | `536870912` (= `MAX_UPLOAD_SIZE`) | INSTREAM size cap for clamd; the container syncs clamd's `StreamMaxLength` to this value, so all uploads scan via INSTREAM and clamd never needs to read app-owned files (avoids `Access denied` on the upload volume). Lower it to scan larger files via clamd's file-based SCAN |
 | `WS_UPLOAD_ENABLED` | `true` | enable the WebSocket chunked-upload endpoint (`/file/upload/ws`); the browser uses it by default and falls back to HTTP chunks on failure |
 | `WS_CHUNK_SIZE` | `1048576` (1 MB) | client-side WebSocket frame size in bytes; `0` disables the WS endpoint |
@@ -178,8 +178,6 @@ Feed updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=f
 | `YARA_RSS_BUDGET_MB` | `0` (auto) | RSS budget in MB for the compiled YARA rule set: `0` = cgroup memory limit − current usage − 512 MB reserve, negative = unlimited, positive = explicit MB. Rule sets that would exceed the budget are skipped (with a log line) instead of getting the daemon OOM-killed mid-compile |
 | `YARA_MATCH_TIMEOUT` | `60` | per-match timeout in seconds for the in-process YARA engine; a sample that hits catastrophic regex backtracking is not hung forever — exceeding it marks the YARA engine `timed out` in the report |
 | `YARA_DAEMON_TIMEOUT` | `600` | per-roundtrip socket timeout for the YARA daemon (`YARA_SOCKET`); a scan the daemon cannot finish in time marks the YARA engine `timed out` in the report |
-
-Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon compiles the rule set once; with all default third-party YARA sources that is several GB. If the daemon or workers get OOM-killed (`Killed`/`Child process died` with no traceback), raise the container memory limit (compose `mem_limit: 8g`) or trim `container/yara-rules-sources.conf` (signature-base is disabled by default for this reason). |
 | `YARA_RULES_SOURCES` | `/etc/yara-rules-sources.conf` | third-party YARA rule sources (`name|git-url|branch|subdir`) for the local YARA engine; license-permitted sets only |
 | `DOMAIN_FEED_DIR` | unset (container: `/data/domain-feed`) | directory with downloaded domain feed files (`<name>.txt` + `.feed-stamp` + `feed.db`); empty disables URL scanning |
 | `DOMAIN_FEED_SOURCES` | `/etc/domain-feed-sources.conf` | domain feed sources (`name|category|url`) for `scripts/update-domain-feed.sh` |
@@ -196,6 +194,8 @@ Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon comp
 | `RATE_LIMIT_BROWSE` | `0` | optional per-IP rate limit on browsing result pages (`/ui/`, `/ui/search`, `/ui/file/{hash}`): max requests per window, `0` = disabled |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | rate-limit window length in seconds (429 returned when exceeded) |
 | `PLAUSIBLE_SCRIPT_URL` | unset | optional Plausible analytics script URL loaded (deferred) on every page; unset = fully airgapped |
+
+Memory note: clamd holds the ClamAV signature DB in RAM and the yara daemon compiles the rule set once; with all default third-party YARA sources that is several GB. If the daemon or workers get OOM-killed (`Killed`/`Child process died` with no traceback), raise the container memory limit (compose `mem_limit: 8g`) or trim `container/yara-rules-sources.conf` (signature-base is disabled by default for this reason).
 
 ## Development
 
