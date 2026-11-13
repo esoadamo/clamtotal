@@ -28,8 +28,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     YARA_RULES_DIR=/rules \
     YARA_SOCKET=/tmp/yara.sock \
     DOMAIN_FEED_DIR=/data/domain-feed \
-    DOMAIN_FEED_SOCKET=/tmp/domain-feed.sock \
-    CLAM_AUTOUPDATE=true
+    DOMAIN_FEED_SOCKET=/tmp/domain-feed.sock
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -68,7 +67,7 @@ RUN chmod +x /usr/local/bin/update-signatures.sh /usr/local/bin/update-yara-rule
            || { echo 'FATAL: airgapped build produced no signature databases in /var/lib/clamav; refusing to publish a broken image' >&2; exit 1; }; \
          touch /app/.airgapped; \
          YARA_RULES_DIR=/rules update-yara-rules.sh || true; \
-         DOMAIN_FEED_DIR=/data/domain-feed update-domain-feed.sh || true; \
+         DOMAIN_FEED_DIR=/var/lib/clamtotal/domain-feed update-domain-feed.sh || true; \
          else echo "default build: signatures are downloaded on first container launch"; fi
 
 # Expose clamd on TCP 3310 inside the container (INSTREAM protocol).

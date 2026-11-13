@@ -340,3 +340,24 @@ def test_containerignore_present_and_covers_secrets():
     ci = (ROOT / ".containerignore").read_text()
     for pattern in [".env*", "*.pem", "*.key", "*secret*", ".git"]:
         assert pattern in ci, pattern
+
+
+def test_airgapped_autoupdate_default_and_baked_feed():
+    cf = (ROOT / "Containerfile").read_text()
+    ep = (ROOT / "container-entrypoint.sh").read_text()
+    # The image must NOT hardcode CLAM_AUTOUPDATE=true in ENV: image env always
+    # beats the entrypoint's airgapped default, so airgapped containers kept
+    # trying to download signatures/YARA rules/feed with no network.
+    env_block = "\n".join(
+        line
+        for line in cf.split("RUN apt-get")[0].splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "CLAM_AUTOUPDATE" not in env_block
+    # airgapped marker: baked by the build, resolved to CLAM_AUTOUPDATE=false by
+    # the entrypoint unless the user overrides it
+    assert "/app/.airgapped" in cf and "/app/.airgapped" in ep
+    # the baked domain feed must live OUTSIDE /data: the runtime volume shadows
+    # anything baked there, and the entrypoint seeds the feed dir from it
+    assert "/var/lib/clamtotal/domain-feed" in cf
+    assert "/var/lib/clamtotal/domain-feed" in ep

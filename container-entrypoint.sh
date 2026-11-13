@@ -61,6 +61,19 @@ fi
 
 # Domain feed for URL/domain scanning (hagezi, StevenBlack, URLhaus with key, ...).
 # Non-fatal: without it file scanning still works and URL checks return 503.
+# Airgapped images bake the feed into /var/lib/clamtotal/domain-feed at build time
+# (NOT into $DOMAIN_FEED_DIR: that lives under /data, which the runtime volume
+# shadows, hiding anything baked there). Seed the feed dir from the baked copy
+# on first start so the offline container has a feed without any downloads.
+feed_dir="${DOMAIN_FEED_DIR:-/data/domain-feed}"
+if [ "${CLAM_AUTOUPDATE:-true}" != "true" ] \
+   && ! ls "$feed_dir"/*.txt >/dev/null 2>&1 \
+   && ls /var/lib/clamtotal/domain-feed/*.txt >/dev/null 2>&1; then
+  echo "[bootstrap] seeding domain feed from the baked-in copy..."
+  cp /var/lib/clamtotal/domain-feed/*.txt "$feed_dir"/ \
+    && touch "$feed_dir/.feed-stamp" \
+    || echo "[bootstrap] could not seed the domain feed - URL checks will 503 until a feed exists"
+fi
 if [ "${CLAM_AUTOUPDATE:-true}" = "true" ]; then
   feed_dir="${DOMAIN_FEED_DIR:-/data/domain-feed}"
   if ! ls "$feed_dir"/*.txt >/dev/null 2>&1; then

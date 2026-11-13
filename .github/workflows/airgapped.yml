@@ -4,7 +4,8 @@ name: airgapped-image
 # freshclam, unofficial via fangfrisch, third-party YARA rules, domain feed — baked
 # in at BUILD time) and publishes it to GHCR as :airgapped-latest. Runs on every
 # push to main and every 3 days on a schedule so airgapped deployments always get a
-# fresh signature set. Runtime stays offline: run it with CLAM_AUTOUPDATE=false.
+# fresh signature set. The image defaults CLAM_AUTOUPDATE=false (see /app/.airgapped),
+# so its runtime stays fully offline.
 
 permissions:
   contents: read
