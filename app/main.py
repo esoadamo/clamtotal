@@ -641,6 +641,7 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
             "ws_enabled": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
             "ws_chunk_size": settings.ws_chunk_size,
             "max_upload_size_human": _human_size(settings.max_upload_size),
+            "allow_ephemeral": settings.allow_ephemeral_upload,
             "reanalyze": reanalyze,
         },
     )
@@ -702,13 +703,18 @@ def _run_scan_file(path: Path, file_name: str) -> None:
 
 
 def _enqueue_scan(
-    background_tasks: BackgroundTasks, db: Session, data: bytes, file_name: str, rescan: bool
+    background_tasks: BackgroundTasks,
+    db: Session,
+    data: bytes,
+    file_name: str,
+    rescan: bool,
+    ephemeral: bool = False,
 ) -> tuple[Scan, bool]:
     """Whole-file upload: persist the bytes first, then enqueue the scan from disk."""
     hashes = compute_hashes(data)
     path = Path(settings.upload_dir) / hashes["sha256"]
     path.write_bytes(data)
-    return _enqueue_scan_file(background_tasks, db, path, hashes, file_name, rescan)
+    return _enqueue_scan_file(background_tasks, db, path, hashes, file_name, rescan, ephemeral)
 
 
 def _enqueue_scan_file(
@@ -718,16 +724,20 @@ def _enqueue_scan_file(
     hashes: dict[str, str],
     file_name: str,
     rescan: bool = False,
+    ephemeral: bool = False,
 ) -> tuple[Scan, bool]:
     """Return a cached done-row or enqueue an async scan of the already-stored file.
     `hashes` must equal compute_hashes_file(path) — on the chunked path they are computed
     in one streaming pass during assembly, so large files are never re-read/re-hashed
     on the request path. Returns (scan, was_cached)."""
+    ephemeral = ephemeral and settings.allow_ephemeral_upload
     existing = db.get(Scan, hashes["sha256"])
     if existing and existing.status == "done" and not rescan:
         if file_name not in (existing.names or []):  # record alternative names on cache hits
             existing.names = sorted(set(existing.names or []) | {file_name})
-            db.commit()
+        if ephemeral:
+            existing.ephemeral = True
+        db.commit()
         return existing, True
     with open(path, "rb") as f:
         head = f.read(65536)  # sniff_file_type only inspects the head of the file
@@ -745,6 +755,7 @@ def _enqueue_scan_file(
             existing.engines = _scanning_engines()
         names = sorted(set(existing.names or []) | {file_name})
         existing.names = names
+        existing.ephemeral = ephemeral
         scan = existing
     else:
         scan = Scan(
@@ -758,6 +769,7 @@ def _enqueue_scan_file(
             magic_hex=magic_hex,
             verdict="pending",
             status="pending",
+            ephemeral=ephemeral,
             engine="pending",
             urls=[],
             engines=_scanning_engines(),
@@ -790,6 +802,7 @@ async def upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     rescan: bool = False,
+    ephemeral: bool = False,
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -804,7 +817,13 @@ async def upload(
     # hashing/sniffing a large file is CPU-heavy — run off the event loop so other
     # requests (incl. in-flight chunk uploads) are not stalled while it runs
     scan, cached = await to_thread.run_sync(
-        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", rescan
+        _enqueue_scan,
+        background_tasks,
+        db,
+        data,
+        file.filename or "upload.bin",
+        rescan,
+        ephemeral,
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -856,6 +875,7 @@ async def upload_chunk(
     total: int = Form(...),
     name: str = Form(""),
     rescan: bool = Form(False),
+    ephemeral: bool = Form(False),
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -915,6 +935,7 @@ async def upload_chunk(
         hashes,
         name or file.filename or "upload.bin",
         rescan,
+        ephemeral,
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -980,6 +1001,7 @@ async def upload_ws(
                     total = int(ctrl["total"])
                     name = str(ctrl.get("name", ""))
                     rescan = bool(ctrl.get("rescan", False))
+                    ephemeral = bool(ctrl.get("ephemeral", False))
                     if not _CHUNK_NAME_RE.match(sha256) or total < 1:
                         await fail("invalid sha256/total")
                         return
@@ -1043,6 +1065,7 @@ async def upload_ws(
                         hashes,
                         name or "upload.bin",
                         rescan,
+                        ephemeral,
                     )
                     await websocket.send_text(
                         json.dumps({"type": "done", "sha256": scan.sha256, "cached": cached})
@@ -1094,7 +1117,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             except Exception:
                 logger.warning("domain feed lookup failed for %s", d, exc_info=True)
                 domain_results[d] = []
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "report.html",
         {
@@ -1107,6 +1130,13 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
             "domain_results": domain_results,
         },
     )
+    # ephemeral upload: the finished report has now been viewed once — delete the
+    # stored sample and the scan result row (unless a rescan of it is in flight)
+    if scan.ephemeral and not pending and not _sample_in_use(scan.sha256, db):
+        (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
+        db.delete(scan)
+        db.commit()
+    return response
 
 
 @app.get("/ui/file/{hash_value}/download")
@@ -1235,6 +1265,7 @@ async def api_scan(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     rescan: bool = False,
+    ephemeral: bool = False,
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -1245,7 +1276,13 @@ async def api_scan(
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})
     scan, cached = await to_thread.run_sync(
-        _enqueue_scan, background_tasks, db, data, file.filename or "upload.bin", rescan
+        _enqueue_scan,
+        background_tasks,
+        db,
+        data,
+        file.filename or "upload.bin",
+        rescan,
+        ephemeral,
     )
     return JSONResponse(
         status_code=200 if cached else 202,

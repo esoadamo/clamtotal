@@ -225,6 +225,7 @@ Feed updates are opt-out together with the ClamAV updates via `CLAM_AUTOUPDATE=f
 | `MAX_EMBEDDED_FILES` | `10` | max archive members scanned recursively per file |
 | `MAX_SCAN_DEPTH` | `2` | recursion depth for embedded-file scanning |
 | `SHOW_RECENT_SCANS` | `true` | show the "recently analyzed files" list on the home page (`false` hides it) |
+| `ALLOW_EPHEMERAL_UPLOAD` | `false` | when `true`, the upload confirmation dialog shows an "ephemeral upload" checkbox; when checked, the stored sample and its scan result are deleted as soon as the scan has finished and the report page has been viewed once (works for full, chunked and WebSocket uploads) |
 | `UPLOADS_TTL` | `-1` | how long uploaded samples are stored locally, in minutes: `-1` = forever, `0` = delete right after upload+scan, `N` = keep N minutes (pruned every minute) |
 | `SCANS_TTL` | `-1` | how long scan results (report rows in the SQLite database) are kept, in minutes, same semantics as `UPLOADS_TTL`: `-1` = forever (default), `0` = delete right after the scan finishes, `N` = keep N minutes (pruned every minute; the stored sample is deleted together with its scan result) |
 | `SCAN_POLL_INTERVAL_MS` | `3000` | how often the pending report page polls for scan progress |

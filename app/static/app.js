@@ -402,6 +402,7 @@
     // set when the user came from a report's Reanalyze link (/ui/?reanalyze=<sha>):
     // the chosen file's SHA-256 must match and the upload goes out with rescan=true
     var rescanSha = (form.dataset.rescanSha || '').toLowerCase();
+    var ephemeralEnabled = form.dataset.ephemeral === '1';
 
     function showError(msg) {
       if (progress && idle && errorBox) {
@@ -414,12 +415,12 @@
 
     /* Large files: prefer a persistent WebSocket (small frames, no per-request proxy
        limits, resumable on reconnect); fall back to classic HTTP chunked upload. */
-    function startChunkedUpload(file, sha256) {
-      if (form.dataset.wsUpload === '1') return startWsUpload(file, sha256);
-      return startHttpChunkedUpload(file, sha256);
+    function startChunkedUpload(file, sha256, ephemeral) {
+      if (form.dataset.wsUpload === '1') return startWsUpload(file, sha256, ephemeral);
+      return startHttpChunkedUpload(file, sha256, ephemeral);
     }
 
-    function startWsUpload(file, sha256) {
+    function startWsUpload(file, sha256, ephemeral) {
       var wsChunkSize = parseInt(form.dataset.wsChunkSize || '0', 10);
       var plan = chunkPlan(file.size, wsChunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
@@ -456,7 +457,7 @@
           var ws = new global.WebSocket(wsUrl('/file/upload/ws'));
           var settled = false;
           ws.onopen = function () {
-            ws.send(JSON.stringify({ type: 'start', sha256: sha256, total: total, name: file.name, rescan: !!rescanSha }));
+            ws.send(JSON.stringify({ type: 'start', sha256: sha256, total: total, name: file.name, rescan: !!rescanSha, ephemeral: !!ephemeral }));
           };
           ws.onmessage = function (ev) {
             var msg;
@@ -497,12 +498,12 @@
       report();
       return attempt(3)
         .then(function () { global.location.href = '/ui/file/' + sha256; })
-        .catch(function () { return startHttpChunkedUpload(file, sha256); });
+        .catch(function () { return startHttpChunkedUpload(file, sha256, ephemeral); });
     }
 
     /* HTTP chunked fallback: upload in chunks so no single request body exceeds the
        proxy's limit (e.g. Cloudflare). Server reassembles, verifies SHA-256, scans. */
-    function startHttpChunkedUpload(file, sha256) {
+    function startHttpChunkedUpload(file, sha256, ephemeral) {
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       var plan = chunkPlan(file.size, chunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
@@ -533,7 +534,7 @@
         return withRetry(function () {
           return postChunk('/file/upload/chunk', {
             sha256: sha256, index: String(part.index), total: String(total), name: file.name,
-            rescan: rescanSha ? 'true' : 'false',
+            rescan: rescanSha ? 'true' : 'false', ephemeral: ephemeral ? 'true' : 'false',
           }, blob, function (frac) {
             inFlight[part.index] = (part.end - part.start) * frac;
             report();
@@ -563,7 +564,7 @@
         .catch(function () { clearInterval(ticker); /* error already shown */ });
     }
 
-    function startUpload(file, sha256) {
+    function startUpload(file, sha256, ephemeral) {
       closeModal();
       if (idle) idle.style.display = 'none';
       if (errorBox) errorBox.style.display = 'none';
@@ -572,7 +573,7 @@
       if (status) status.textContent = uploadStatusText(file.name, 0);
       if (bar) bar.style.width = '0%';
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
-      if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256);
+      if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256, ephemeral);
       var startedAt = Date.now();
       var lastLoaded = 0, lastTotal = file.size || 1;
       function renderUpload() {
@@ -584,7 +585,9 @@
           (pct >= 100 ? '' : uploadStatsSuffix(lastLoaded, lastTotal, startedAt, Date.now()));
       }
       var xhr = new global.XMLHttpRequest();
-      xhr.open('POST', form.action + (rescanSha ? '?rescan=true' : ''));
+      xhr.open('POST', form.action + (rescanSha || ephemeral
+        ? '?' + [rescanSha && 'rescan=true', ephemeral && 'ephemeral=true'].filter(Boolean).join('&')
+        : ''));
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable) { lastLoaded = e.loaded; lastTotal = e.total; renderUpload(); }
       };
@@ -601,7 +604,7 @@
         // automatically retry as a chunked upload with a safe fallback chunk size.
         if (xhr.status === 413 && file.size > (chunkSize || FALLBACK_CHUNK_SIZE)) {
           form.dataset.chunkSize = String(chunkSize || FALLBACK_CHUNK_SIZE);
-          startChunkedUpload(file, sha256);
+          startChunkedUpload(file, sha256, ephemeral);
           return;
         }
         showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
@@ -648,7 +651,13 @@
             '<span class="muted">Name:</span> ' + file.name + '<br>' +
             '<span class="muted">Size:</span> ' + file.size + ' bytes<br>' +
             '<span class="muted">SHA-256:</span> <span class="mono">' + sha256 + '</span><br><br>' +
-            'Do you want to upload it for scanning?');
+            'Do you want to upload it for scanning?' +
+            (ephemeralEnabled
+              ? '<br><br><label style="display:flex; gap:8px; align-items:flex-start; text-align:left">' +
+                '<input type="checkbox" id="ephemeral-check" style="margin-top:3px">' +
+                '<span>Ephemeral upload — delete the file and its scan result as soon as ' +
+                'the scan is finished and I have viewed the result once.</span></label>'
+              : ''));
         });
       });
     }
@@ -656,7 +665,10 @@
     var cancelBtn = $('modal-cancel'), confirmBtn = $('modal-confirm');
     if (cancelBtn) cancelBtn.addEventListener('click', function () { closeModal(); input.value = ''; });
     if (confirmBtn) confirmBtn.addEventListener('click', function () {
-      if (pendingFile) startUpload(pendingFile.file, pendingFile.sha256);
+      if (pendingFile) {
+        var check = $('ephemeral-check');
+        startUpload(pendingFile.file, pendingFile.sha256, !!(check && check.checked));
+      }
     });
     input.addEventListener('change', function () { if (input.files.length) onFileSelected(input.files[0]); });
     form.addEventListener('submit', function (e) { e.preventDefault(); });

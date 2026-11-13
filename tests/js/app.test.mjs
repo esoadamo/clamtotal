@@ -565,3 +565,64 @@ test('initUpload with reanalyze target rejects a file whose hash does not match'
   delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
   delete globalThis.XMLHttpRequest; delete globalThis.location;
 });
+
+test('upload confirm dialog offers the ephemeral checkbox and sends ephemeral=true', async () => {
+  const content = new TextEncoder().encode('ephemeral please');
+  const sha = CT.sha256HexPure(content);
+  const { els, form, input } = stubUploadDom('');
+  form.dataset.ephemeral = '1';
+  els['modal-confirm'] = { listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
+  els['ephemeral-check'] = { checked: true };
+  let sent = null;
+  stubFileReaderAndXhr((xhr) => { sent = xhr; });
+  globalThis.fetch = () => Promise.resolve({ ok: false });
+  globalThis.location = { href: '' };
+  globalThis.setInterval = () => 1;
+  globalThis.clearInterval = () => {};
+
+  CT.initUpload();
+  const file = { name: 'e.bin', size: content.length, slice: (a, b) => ({ size: b - a, _buf: content.slice(a, b) }) };
+  input.files = [file];
+  input.listeners.change();
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.match(els['modal-body'].innerHTML, /ephemeral-check/);
+  els['modal-confirm'].listeners.click();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(sent, 'an upload XHR was sent');
+  assert.equal(sent._url, '/file/upload?ephemeral=true');
+  assert.equal(globalThis.location.href, '/ui/file/' + sha);
+
+  delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
+  delete globalThis.XMLHttpRequest; delete globalThis.location; delete globalThis.fetch;
+  delete globalThis.setInterval; delete globalThis.clearInterval;
+});
+
+test('ephemeral checkbox hidden when ALLOW_EPHEMERAL_UPLOAD is off', async () => {
+  const content = new TextEncoder().encode('no ephemeral here');
+  const { els, form, input } = stubUploadDom('');
+  form.dataset.ephemeral = '0';
+  els['modal-confirm'] = { listeners: {}, addEventListener(ev, fn) { this.listeners[ev] = fn; } };
+  let sent = null;
+  stubFileReaderAndXhr((xhr) => { sent = xhr; });
+  globalThis.fetch = () => Promise.resolve({ ok: false });
+  globalThis.location = { href: '' };
+  globalThis.setInterval = () => 1;
+  globalThis.clearInterval = () => {};
+
+  CT.initUpload();
+  const file = { name: 'n.bin', size: content.length, slice: (a, b) => ({ size: b - a, _buf: content.slice(a, b) }) };
+  input.files = [file];
+  input.listeners.change();
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.doesNotMatch(els['modal-body'].innerHTML, /ephemeral-check/);
+  els['modal-confirm'].listeners.click();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(sent);
+  assert.equal(sent._url, '/file/upload');
+
+  delete globalThis.document; delete globalThis.FileReader; delete globalThis.FormData;
+  delete globalThis.XMLHttpRequest; delete globalThis.location; delete globalThis.fetch;
+  delete globalThis.setInterval; delete globalThis.clearInterval;
+});

@@ -19,7 +19,7 @@
     </div>
 
     <section id="tab-file" class="tab-panel active">
-      <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}" data-ws-upload="{{ '1' if ws_enabled else '0' }}" data-ws-chunk-size="{{ ws_chunk_size | default(0) }}" data-rescan-sha="{{ reanalyze | default('') }}">
+      <form id="upload-form" action="/file/upload" method="post" enctype="multipart/form-data" data-chunk-size="{{ chunk_size | default(0) }}" data-ws-upload="{{ '1' if ws_enabled else '0' }}" data-ws-chunk-size="{{ ws_chunk_size | default(0) }}" data-ephemeral="{{ '1' if allow_ephemeral else '0' }}" data-rescan-sha="{{ reanalyze | default('') }}">
         <div class="dropzone" id="dropzone">
           {% if reanalyze %}
           <div class="dz-status" id="reanalyze-note" style="margin-bottom:8px">Reanalyzing report <span class="mono">{{ reanalyze }}</span> — choose the exact original file, its SHA-256 must match.</div>

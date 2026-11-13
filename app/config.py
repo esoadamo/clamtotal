@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     max_embedded_files: int = 10
     max_scan_depth: int = 2
 
+    # when true, the upload confirm dialog offers an "ephemeral upload" checkbox:
+    # the stored sample AND its scan result are deleted as soon as the scan has
+    # finished and the report page has been viewed once by the client
+    allow_ephemeral_upload: bool = False
+
     # show the "recently analyzed files" list on the home page
     show_recent_scans: bool = True
 

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -31,6 +31,9 @@ class Scan(Base):
         String(16)
     )  # "clean" | "infected" (any engine); "pending" while scanning
     status: Mapped[str] = mapped_column(String(16), default="done")  # "pending" | "done"
+    # ephemeral upload: delete the sample + this row once the finished report
+    # has been viewed once (only set when ALLOW_EPHEMERAL_UPLOAD=true)
+    ephemeral: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
     engine: Mapped[str] = mapped_column(String(128))  # primary engine (ClamAV)
     urls: Mapped[list[str]] = mapped_column(JSON, default=list)
