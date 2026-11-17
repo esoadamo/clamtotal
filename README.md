@@ -41,10 +41,11 @@ another machine, use `podman save -o file.tar` and `podman load -i file.tar`.
 
 A standalone CLI lives in [`clamtotal-client/`](clamtotal-client/README.md).
 It uses only the Python standard library. Install it as a
-[uv tool](https://docs.astral.sh/uv/concepts/tools/):
+[uv tool](https://docs.astral.sh/uv/concepts/tools/) directly from git — no
+clone needed:
 
 ```sh
-uv tool install ./clamtotal-client
+uv tool install "git+https://github.com/esoadamo/clamtotal.git#subdirectory=clamtotal-client"
 clamtotal-client scan suspicious.exe --wait 120   # upload, poll, exit 2 if infected
 clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
 clamtotal-client url example.com
