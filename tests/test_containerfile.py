@@ -155,7 +155,11 @@ def test_zizmor_is_own_job_in_tests_workflow():
     assert "  zizmor:\n" in t
     assert "uvx zizmor==1.32.0 --offline .github/workflows/" in t
     # the container image must not build unless zizmor passes too
-    assert "needs: [test, zizmor, sast, sca]" in t
+    assert "needs: [test, zizmor, sast, sca, changes]" in t
+    # client-only pushes (clamtotal-client/ subproject) skip the image build+deploy
+    assert "grep -qv '^clamtotal-client/'" in t
+    assert "needs.changes.outputs.non-client == 'true'" in t
+    assert "needs.build-image.result == 'success'" in t
 
 
 def test_compose_persists_clamav_signature_db():
