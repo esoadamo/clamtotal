@@ -69,5 +69,10 @@ podman build -t clamtotal . && podman compose up   # container mode (clamd)
   services. Signature updates (freshclam/fangfrisch) are opt-out via
   `CLAM_AUTOUPDATE=false`, and no community/login features.
 - **100% test coverage is mandatory**: `app/` must be at 100% line coverage
-  (`pytest` runs with `--cov=app --cov-fail-under=100` via `addopts`; keep it green).
+  (`pytest` runs with `--cov=app --cov-fail-under=100` via `addopts`; keep it green);
+  same for `clamtotal_client/` in the subproject.
+- **When the JSON API changes, update `clamtotal-client/` in the same commit**:
+  adjust `api.py`/`cli.py`, its tests, and bump `version` in
+  `clamtotal-client/pyproject.toml` (commit its `uv.lock` too — the SCA job
+  pip-audits both lockfiles).
 - Run `ruff format`, `ruff check`, `ty check`, and `uv run bandit -r app/ -ll -q` (SAST) before committing.

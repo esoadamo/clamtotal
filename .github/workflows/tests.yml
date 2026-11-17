@@ -102,10 +102,14 @@ jobs:
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Export locked requirements
-        run: uv export --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/reqs.txt
+        run: |
+          uv export --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/reqs.txt
+          uv export --project clamtotal-client --locked --all-groups --no-hashes --no-emit-project --format requirements-txt -o /tmp/client-reqs.txt
 
       - name: pip-audit (OSV) — fail on any known vulnerability
-        run: uvx pip-audit --requirement /tmp/reqs.txt --strict
+        run: |
+          uvx pip-audit --requirement /tmp/reqs.txt --strict
+          uvx pip-audit --requirement /tmp/client-reqs.txt --strict
 
   build-image:
     name: Build and publish container image
