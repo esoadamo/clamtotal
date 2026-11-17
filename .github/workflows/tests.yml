@@ -111,10 +111,35 @@ jobs:
           uvx pip-audit --requirement /tmp/reqs.txt --strict
           uvx pip-audit --requirement /tmp/client-reqs.txt --strict
 
+  changes:
+    name: Detect push scope (client-only changes skip the image build/deploy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      non-client: ${{ steps.filter.outputs.non-client }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false  # avoid artipacked credential persistence
+          fetch-depth: 0  # need the before-SHA tree for the diff
+
+      - name: Did anything outside clamtotal-client/ change?
+        id: filter
+        run: |
+          # empty diff (e.g. before == sha) counts as client-only -> no rebuild
+          if git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+            | grep -qv '^clamtotal-client/'; then
+            echo "non-client=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "non-client=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-image:
     name: Build and publish container image
-    needs: [test, zizmor, sast, sca]  # image builds only when ALL checks pass, incl. the zizmor audit
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, zizmor, sast, sca, changes]  # image builds only when ALL checks pass, incl. the zizmor audit
+    # client-only pushes (CLI subproject) do not change the image -> skip build AND deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.non-client == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,7 +184,9 @@ jobs:
   deploy:
     name: Deploy published image to the server
     needs: [build-image]  # runs only after the image was actually pushed to GHCR
+    # skipped too when build-image was skipped (client-only push)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.build-image.result == 'success'
     runs-on: ubuntu-latest
     permissions: {}  # deploy needs no GitHub API permissions
     timeout-minutes: 5  # deploy endpoint must answer within 5 minutes
