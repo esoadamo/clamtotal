@@ -70,6 +70,22 @@ uv run uvicorn app.main:app --reload --reload-dir app   # watch only app/ so upl
 Open http://127.0.0.1:8000/ui/ — try uploading the
 [EICAR test file](https://en.wikipedia.org/wiki/EICAR_test_file) to see a detection.
 
+## CLI client (`clamtotal-client`)
+
+A standalone stdlib-only CLI lives in [`clamtotal-client/`](clamtotal-client/README.md)
+and installs as a [uv tool](https://docs.astral.sh/uv/concepts/tools/):
+
+```sh
+uv tool install ./clamtotal-client
+clamtotal-client scan suspicious.exe --wait 120   # upload, poll, exit 2 if infected
+clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
+clamtotal-client url example.com
+```
+
+Every option falls back to an env var: `--url` → `CLAMTOTAL_URL`
+(default `https://clamtotal.com`), `--timeout` → `CLAMTOTAL_TIMEOUT`,
+`--token` → `CLAMTOTAL_API_KEY`.
+
 ## Container image
 
 On every push to `main` where all tests pass, CI builds and publishes the image to GHCR:

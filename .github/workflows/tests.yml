@@ -52,6 +52,13 @@ jobs:
       - name: Run frontend JS tests
         run: node --test tests/js/app.test.mjs
 
+      - name: Test clamtotal-client subproject (100% coverage of clamtotal_client/ enforced)
+        working-directory: clamtotal-client
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run pytest
+
   zizmor:
     name: zizmor — workflow security audit
     runs-on: ubuntu-latest

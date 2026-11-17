@@ -24,3 +24,5 @@ id_rsa*
 *.kdbx
 uploads/
 /data/
+# the CLI client is installed from the subdir as a uv tool, never needed in the image
+clamtotal-client/

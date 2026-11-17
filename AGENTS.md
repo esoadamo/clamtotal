@@ -34,6 +34,7 @@ no external API calls, CDNs, fonts, or telemetry at runtime.
 - `tests/test_frontend.py` — asserts the rendered HTML matches the DOM contract app.js expects
 - `alembic/` — migrations (`alembic revision --autogenerate -m "..."`)
 - `Containerfile`, `compose.yaml`, `container-entrypoint.sh` — Podman deployment
+- `clamtotal-client/` — standalone uv tool subproject (`uv tool install ./clamtotal-client`): stdlib-only CLI (`scan`, `describe`, `url`) against the JSON API; every option falls back to an env var (`CLAMTOTAL_URL`, default `https://clamtotal.com`, `CLAMTOTAL_TIMEOUT`, `CLAMTOTAL_API_KEY`); has its own pyproject/pytest config (100% coverage of `clamtotal_client/`), run its tests with `cd clamtotal-client && uv run pytest`
 
 ## CI
 
