@@ -145,6 +145,13 @@ def _show_report(report: dict, as_json: bool, timed_out: bool) -> int:
     return code
 
 
+def _defang(value: str) -> str:
+    """Neutralize a URL for safe reading/copy-paste into reports: the JSON API
+    serves raw URLs, so the human output defangs them (hxxp + [.]) — --json
+    keeps the raw value for machines."""
+    return value.replace("http", "hxxp").replace(".", "[.]")
+
+
 def _fmt_bytes(n: int) -> str:
     if n < 1024:
         return f"{n} B"
@@ -420,7 +427,7 @@ def cmd_describe(args: argparse.Namespace) -> int:
         if urls:
             print("urls:")
             for u in urls:
-                print(f"  {u}")
+                print(f"  {_defang(u)}")
     code, unfinished = _report_exit_code(report)
     if report.get("status") == "pending":
         print(f"scan still pending (sha256: {report.get('sha256', '?')})", file=sys.stderr)
@@ -439,6 +446,7 @@ def cmd_url(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(f"verdict: {result.get('verdict', '?')}  id: {result.get('id', '?')}")
+        print(f"url:     {_defang(result.get('url', '?'))}")
         for cat in result.get("categories", []):
             print(f"category: {cat}")
     return 2 if result.get("verdict") == "malicious" else 0

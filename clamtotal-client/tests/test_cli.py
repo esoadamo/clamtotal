@@ -73,7 +73,7 @@ def requests(monkeypatch):
                     "status": "done",
                     "signature": "Eicar-Test-Signature",
                     "engines": ["clamav", "yara"],
-                    "urls": ["hxxp://evil[.]com"],
+                    "urls": ["http://evil.com/payload.exe", "https://cdn.example.net/x"],
                 }
                 return FakeResponse(json.dumps(resp).encode())
             raise urllib.error.HTTPError(  # unknown hash: sample not on the server
@@ -662,6 +662,13 @@ def test_url_human(monkeypatch, requests, capsys):
     assert run(["url", "evil.com"]) == 2
     out = capsys.readouterr().out
     assert "verdict: malicious" in out and "category: malware" in out
+    assert "url:     hxxp://evil[.]com" in out  # defanged in human output
+
+
+def test_defang():
+    assert cli._defang("http://evil.com/x?a=1") == "hxxp://evil[.]com/x?a=1"
+    assert cli._defang("https://a.b.io/path") == "hxxps://a[.]b[.]io/path"
+    assert cli._defang("no scheme here") == "no scheme here"
 
 
 def test_url_json(monkeypatch, requests, capsys):

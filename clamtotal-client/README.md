@@ -82,6 +82,10 @@ cannot work - the daemon can only rescan what you upload - and fails fast.
 `describe` and `url` accept `--json` for raw output; `--json` combined with the
 result wait prints the final report as JSON.
 
+URLs shown in the human-readable output are defanged (`http://evil.com` ->
+`hxxp://evil[.]com`), so pasting client output into tickets or reports never
+fires the real endpoint; `--json` keeps the raw values for machines.
+
 ## Configuration
 
 Every CLI option falls back to an environment variable:
