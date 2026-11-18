@@ -2,7 +2,7 @@
 
 Every option falls back to an environment variable: --url -> CLAMTOTAL_URL
 (default https://clamtotal.com), --timeout -> CLAMTOTAL_TIMEOUT,
---token -> CLAMTOTAL_API_KEY.
+--token -> CLAMTOTAL_API_KEY, --engines (scan) -> CLAMTOTAL_ENGINES.
 """
 
 import argparse
@@ -43,7 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--engines",
         metavar="IDS",
-        help="comma-separated engines to run (clamav, yara, domain-feed; default: all)",
+        help="comma-separated engines to run (clamav, yara, domain-feed; default: all; "
+        "env CLAMTOTAL_ENGINES)",
     )
     scan.add_argument(
         "--wait",
@@ -106,7 +107,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 timeout=args.timeout,
                 rescan=args.rescan,
                 ephemeral=args.ephemeral,
-                engines=args.engines or "",
+                engines=_opt(args.engines, "CLAMTOTAL_ENGINES", None) or "",
             )
         except api.ClientError as exc:
             print(f"error: {exc}", file=sys.stderr)

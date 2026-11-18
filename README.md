@@ -60,7 +60,7 @@ clamtotal-client url example.com
 
 Every option falls back to an env var: `--url` → `CLAMTOTAL_URL`
 (default `https://clamtotal.com`), `--timeout` → `CLAMTOTAL_TIMEOUT`,
-`--token` → `CLAMTOTAL_API_KEY`.
+`--token` → `CLAMTOTAL_API_KEY`, `--engines` → `CLAMTOTAL_ENGINES`.
 
 ## Configuration (environment variables)
 

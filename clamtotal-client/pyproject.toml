@@ -1,6 +1,6 @@
 [project]
 name = "clamtotal-client"
-version = "0.2.0"
+version = "0.2.1"
 description = "CLI client for a ClamTotal server: scan files, describe reports (VT-style API)"
 readme = "README.md"
 license = { text = "GPL-3.0-only" }

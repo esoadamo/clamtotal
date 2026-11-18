@@ -79,7 +79,7 @@ def requests(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for var in ("CLAMTOTAL_URL", "CLAMTOTAL_TIMEOUT", "CLAMTOTAL_API_KEY"):
+    for var in ("CLAMTOTAL_URL", "CLAMTOTAL_TIMEOUT", "CLAMTOTAL_API_KEY", "CLAMTOTAL_ENGINES"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -131,6 +131,21 @@ def test_scan_engines_selection_in_body(monkeypatch, requests, tmp_path):
     body = requests[0].data
     assert b'name="engines"' in body
     assert b"clamav,yara" in body
+
+
+def test_scan_engines_env_fallback(monkeypatch, requests, tmp_path):
+    monkeypatch.setenv("CLAMTOTAL_ENGINES", "yara")
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    run(["scan", str(f)], monkeypatch, requests)  # no flag: env var applies
+    body = requests[0].data
+    assert b'name="engines"' in body and b"yara" in body
+    run(["scan", "--engines", "domain-feed", str(f)], monkeypatch, requests)
+    body = requests[1].data  # explicit flag overrides the env var
+    assert b"domain-feed" in body
+    monkeypatch.delenv("CLAMTOTAL_ENGINES")
+    run(["scan", str(f)], monkeypatch, requests)
+    assert b'name="engines"' not in requests[2].data  # unset -> all engines (default)
 
 
 def test_scan_human_output_and_wait(monkeypatch, requests, capsys, tmp_path):
