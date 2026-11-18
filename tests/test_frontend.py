@@ -283,8 +283,9 @@ def test_home_layout_contract(client):
     # the upload form still lives in the FILE panel with the full JS contract
     assert 'id="upload-form"' in home and 'action="/file/upload"' in home
     # URL tab keeps the URL form contract; no feed/API internals shown to users
+    # (the engine picker's "Domain feed" checkbox is fine: it is a user-facing choice)
     assert 'id="url-form"' in home and 'action="/ui/url/lookup"' in home
-    assert "domain feed" not in home.lower()
+    assert "feed.db" not in home and "DOMAIN_FEED" not in home
     assert "/healthz" not in home
     # ToS + privacy notice under the widget; no "automate submissions" API box on the home page
     assert "home-notice" in home

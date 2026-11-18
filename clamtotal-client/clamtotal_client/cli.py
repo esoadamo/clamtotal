@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--rescan", action="store_true", help="force a re-analysis")
     scan.add_argument("--ephemeral", action="store_true", help="do not persist the sample")
     scan.add_argument(
+        "--engines",
+        metavar="IDS",
+        help="comma-separated engines to run (clamav, yara, domain-feed; default: all)",
+    )
+    scan.add_argument(
         "--wait",
         type=float,
         metavar="SECONDS",
@@ -101,6 +106,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 timeout=args.timeout,
                 rescan=args.rescan,
                 ephemeral=args.ephemeral,
+                engines=args.engines or "",
             )
         except api.ClientError as exc:
             print(f"error: {exc}", file=sys.stderr)

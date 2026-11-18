@@ -59,6 +59,7 @@ def post_file(
     timeout: float = DEFAULT_TIMEOUT,
     rescan: bool = False,
     ephemeral: bool = False,
+    engines: str = "",
 ) -> dict:
     boundary = f"----clamtotal-client-{uuid.uuid4().hex}"
     parts = []
@@ -68,6 +69,11 @@ def post_file(
                 f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n'
                 "\r\ntrue\r\n".encode()
             )
+    if engines:
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="engines"\r\n'
+            f"\r\n{engines}\r\n".encode()
+        )
     parts.append(
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
         f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode()

@@ -14,6 +14,7 @@ Zero runtime dependencies (stdlib only), so it installs and runs fully airgapped
 # scan one or more files (uploads to POST /api/v2/files)
 clamtotal-client scan suspicious.exe
 clamtotal-client scan sample.zip --rescan --wait 120   # poll until done, exit 2 if infected
+clamtotal-client scan suspicious.exe --engines clamav,yara   # run only the selected engines (default: all)
 
 # show the report for a known sample (GET /api/v2/files/{hash})
 clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json

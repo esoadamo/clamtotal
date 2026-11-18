@@ -391,27 +391,87 @@ def _require_any_engine(scanner: Scanner | None = Depends(get_scanner)) -> Scann
     return scanner
 
 
-def _scanning_engines(scanner: Scanner | None = None) -> list[dict]:
+ENGINE_IDS = ("clamav", "yara", "domain-feed")
+
+
+def _available_engines() -> set[str]:
+    """Engine ids that can be selected right now: ClamAV whenever ENABLED_SCANNERS
+    keeps it on (a down daemon still gets a row that flips to unavailable), YARA only
+    when a rules engine resolves, the domain feed only when it is configured."""
+    available = set(enabled_scanners() or ()) & {"clamav", "yara"}
+    if "yara" in available and get_yara_scanner() is None:
+        available.discard("yara")
+    if get_domain_feed() is not None:
+        available.add("domain-feed")
+    return available
+
+
+def _parse_engines(value: str | None) -> frozenset[str] | None:
+    """Engine selection from an `engines` request parameter: a comma-separated list
+    of ids from ENGINE_IDS. Empty or "all" (or any set equal to everything available)
+    means all engines — the default. Unknown or currently unavailable ids -> 400."""
+    ids = {part.strip().lower() for part in (value or "").split(",") if part.strip()}
+    available = _available_engines()
+    if not ids or ids == {"all"} or ids >= available:
+        return None
+    unknown = sorted(ids - available)
+    if unknown:
+        hint = f"available: {', '.join(sorted(available))}" if available else "no engines available"
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown or unavailable engines: {', '.join(unknown)} ({hint})",
+        )
+    return frozenset(ids)
+
+
+def _engine_choices() -> list[dict]:
+    """Selectable engines for the home page checkboxes: id + display label."""
+    choices: list[dict] = []
+    available = _available_engines()
+    if "clamav" in available:
+        try:
+            scanner = get_scanner()
+        except ScannerUnavailableError:
+            scanner = None
+        choices.append(
+            {"id": "clamav", "label": scanner.engine if scanner is not None else "ClamAV"}
+        )
+    if "yara" in available:
+        yara_scanner = get_yara_scanner()
+        assert yara_scanner is not None  # guaranteed by _available_engines
+        choices.append({"id": "yara", "label": yara_scanner.engine})
+    if "domain-feed" in available:
+        feed = get_domain_feed()
+        assert feed is not None  # guaranteed by _available_engines
+        choices.append({"id": "domain-feed", "label": feed.engine})
+    return choices
+
+
+def _scanning_engines(
+    scanner: Scanner | None = None, selected: frozenset[str] | None = None
+) -> list[dict]:
     """Initial per-engine progress rows (all "scanning") for a freshly enqueued scan.
     The ClamAV engine name comes from the active scanner when one is already resolved
     (lru_cached, so this does not block); when ClamAV is enabled but not resolvable
     right now, fall back to a generic name. ClamAV disabled via ENABLED_SCANNERS
-    (get_scanner() is None) simply gets no row."""
+    (get_scanner() is None) simply gets no row. `selected` limits the rows to the
+    engines chosen at upload time (None = all)."""
     engines: list[dict] = []
-    if scanner is not None:
-        engines.append({"name": scanner.engine, "status": "scanning"})
-    else:
-        try:
-            clam = get_scanner()
-        except ScannerUnavailableError:
-            engines.append({"name": "ClamAV", "status": "scanning"})
+    if selected is None or "clamav" in selected:
+        if scanner is not None:
+            engines.append({"name": scanner.engine, "status": "scanning"})
         else:
-            if clam is not None:
-                engines.append({"name": clam.engine, "status": "scanning"})
-    yara = get_yara_scanner()
+            try:
+                clam = get_scanner()
+            except ScannerUnavailableError:
+                engines.append({"name": "ClamAV", "status": "scanning"})
+            else:
+                if clam is not None:
+                    engines.append({"name": clam.engine, "status": "scanning"})
+    yara = get_yara_scanner() if selected is None or "yara" in selected else None
     if yara is not None:
         engines.append({"name": yara.engine, "status": "scanning"})
-    feed = get_domain_feed()
+    feed = get_domain_feed() if selected is None or "domain-feed" in selected else None
     if feed is not None:
         engines.append({"name": feed.engine, "status": "scanning"})
     return engines
@@ -425,8 +485,10 @@ def _scan_and_store(
     rescan: bool,
     depth: int = 0,
     path: Path | None = None,
+    selected: frozenset[str] | None = None,
 ) -> tuple[Scan, bool]:
-    """Scan with all local engines, run offline analysis, persist. Returns (scan, was_cached).
+    """Scan with the selected engines (None = all), run offline analysis, persist.
+    Returns (scan, was_cached).
     Engine results are committed one by one as they arrive (per-engine status
     "scanning" -> "done"), so the report page shows each verdict live."""
     hashes = compute_hashes(data)
@@ -457,7 +519,7 @@ def _scan_and_store(
     # NB: always assign a fresh copy to the JSON column — mutating an assigned list
     # in place also mutates SQLAlchemy's committed state, and later commits then
     # see no change and silently skip the UPDATE.
-    engines = _scanning_engines(scanner)
+    engines = _scanning_engines(scanner, selected)
     if not engines:
         raise ScannerUnavailableError(
             "no scan engines enabled/available (check ENABLED_SCANNERS and YARA_RULES_DIR)"
@@ -469,7 +531,7 @@ def _scan_and_store(
 
     result: ScanResult | None = None
     engine_idx = 0
-    if scanner is not None:
+    if scanner is not None and (selected is None or "clamav" in selected):
         try:
             result = scanner.scan(data, path=path)
         except (ScannerTimeoutError, TimeoutError):
@@ -488,7 +550,7 @@ def _scan_and_store(
         scan.engines = [dict(e) for e in engines]
         db.commit()
 
-    yara = get_yara_scanner()
+    yara = get_yara_scanner() if selected is None or "yara" in selected else None
     if yara is not None:
         try:
             matches = yara.scan(data, path=path)
@@ -512,7 +574,7 @@ def _scan_and_store(
 
     # domain feed as a detection engine: extracted domains are looked up locally AND
     # auto-scanned (cached UrlScan rows), so they also appear in URL search/relations
-    feed = get_domain_feed()
+    feed = get_domain_feed() if selected is None or "domain-feed" in selected else None
     if feed is not None:
         hits: list[str] = []
         try:
@@ -573,7 +635,9 @@ def _scan_and_store(
     embedded: list[dict] = []
     if depth < settings.max_scan_depth:
         for member_name, member_data in extract_embedded_files(data, settings.max_embedded_files):
-            child, _ = _scan_and_store(db, scanner, member_data, member_name, rescan, depth + 1)
+            child, _ = _scan_and_store(
+                db, scanner, member_data, member_name, rescan, depth + 1, selected=selected
+            )
             embedded.append(
                 {
                     "name": member_name,
@@ -644,6 +708,7 @@ def _render_index(request: Request, db: Session) -> HTMLResponse:
             "ws_chunk_size": settings.ws_chunk_size,
             "max_upload_size_human": _human_size(settings.max_upload_size),
             "allow_ephemeral": settings.allow_ephemeral_upload,
+            "engine_choices": _engine_choices(),
             "reanalyze": reanalyze,
         },
     )
@@ -659,14 +724,19 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     return _render_index(request, db)
 
 
-def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
-    """Background task: scan with all engines and mark the row done. Never raises:
-    a failed scan is logged (with traceback) and the row stays 'pending' for the
-    next startup recovery, instead of killing the worker thread silently."""
+def _run_scan(
+    data: bytes, file_name: str, path: Path | None = None, selected: frozenset[str] | None = None
+) -> None:
+    """Background task: scan with the selected engines (None = all) and mark the row
+    done. Never raises: a failed scan is logged (with traceback) and the row stays
+    'pending' for the next startup recovery, instead of killing the worker thread
+    silently."""
     logger.info("scan started: %s (%d bytes)", file_name, len(data))
     try:
         with SessionLocal() as db:
-            scan, _ = _scan_and_store(db, get_scanner(), data, file_name, rescan=True, path=path)
+            scan, _ = _scan_and_store(
+                db, get_scanner(), data, file_name, rescan=True, path=path, selected=selected
+            )
     except Exception:
         logger.exception("scan failed: %s", file_name)
         return
@@ -693,11 +763,11 @@ def _run_scan(data: bytes, file_name: str, path: Path | None = None) -> None:
                 db.commit()
 
 
-def _run_scan_file(path: Path, file_name: str) -> None:
+def _run_scan_file(path: Path, file_name: str, selected: frozenset[str] | None = None) -> None:
     """Background scan of an already-stored sample: the file is read once here, in the
     background, instead of holding the whole upload in the request's memory."""
     try:
-        _run_scan(path.read_bytes(), file_name, path=path)
+        _run_scan(path.read_bytes(), file_name, path=path, selected=selected)
     except Exception:
         logger.exception("scan of stored file failed: %s", path)
     finally:
@@ -711,12 +781,15 @@ def _enqueue_scan(
     file_name: str,
     rescan: bool,
     ephemeral: bool = False,
+    selected: frozenset[str] | None = None,
 ) -> tuple[Scan, bool]:
     """Whole-file upload: persist the bytes first, then enqueue the scan from disk."""
     hashes = compute_hashes(data)
     path = Path(settings.upload_dir) / hashes["sha256"]
     path.write_bytes(data)
-    return _enqueue_scan_file(background_tasks, db, path, hashes, file_name, rescan, ephemeral)
+    return _enqueue_scan_file(
+        background_tasks, db, path, hashes, file_name, rescan, ephemeral, selected
+    )
 
 
 def _enqueue_scan_file(
@@ -727,6 +800,7 @@ def _enqueue_scan_file(
     file_name: str,
     rescan: bool = False,
     ephemeral: bool = False,
+    selected: frozenset[str] | None = None,
 ) -> tuple[Scan, bool]:
     """Return a cached done-row or enqueue an async scan of the already-stored file.
     `hashes` must equal compute_hashes_file(path) — on the chunked path they are computed
@@ -754,7 +828,7 @@ def _enqueue_scan_file(
             # running for this hash, keep the live progress as-is — resetting it to
             # "scanning" would make finished engines flicker back (e.g. the same
             # file enqueued twice via websocket + HTTP fallback).
-            existing.engines = _scanning_engines()
+            existing.engines = _scanning_engines(selected=selected)
         names = sorted(set(existing.names or []) | {file_name})
         existing.names = names
         existing.ephemeral = ephemeral
@@ -774,17 +848,19 @@ def _enqueue_scan_file(
             ephemeral=ephemeral,
             engine="pending",
             urls=[],
-            engines=_scanning_engines(),
+            engines=_scanning_engines(selected=selected),
         )
         db.add(scan)
     db.commit()
     _scan_started(hashes["sha256"])  # protect the sample until the scan task finishes
     if background_tasks is not None:
-        background_tasks.add_task(_run_scan_file, path, file_name)
+        background_tasks.add_task(_run_scan_file, path, file_name, selected)
     else:
         # websocket endpoints get no BackgroundTasks from starlette — run the scan
         # in a daemon thread instead (same as startup recovery)
-        threading.Thread(target=_run_scan_file, args=(path, file_name), daemon=True).start()
+        threading.Thread(
+            target=_run_scan_file, args=(path, file_name, selected), daemon=True
+        ).start()
     return scan, False
 
 
@@ -805,6 +881,7 @@ async def upload(
     file: UploadFile = File(...),
     rescan: bool = False,
     ephemeral: bool = False,
+    engines: str = "",
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -816,6 +893,7 @@ async def upload(
         raise HTTPException(status_code=400, detail="empty file")
     if len(data) > settings.max_upload_size:
         raise HTTPException(status_code=413, detail="file too large")
+    selected = _parse_engines(engines)
     # hashing/sniffing a large file is CPU-heavy — run off the event loop so other
     # requests (incl. in-flight chunk uploads) are not stalled while it runs
     scan, cached = await to_thread.run_sync(
@@ -826,6 +904,7 @@ async def upload(
         file.filename or "upload.bin",
         rescan,
         ephemeral,
+        selected,
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -878,6 +957,7 @@ async def upload_chunk(
     name: str = Form(""),
     rescan: bool = Form(False),
     ephemeral: bool = Form(False),
+    engines: str = Form(""),
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -901,6 +981,7 @@ async def upload_chunk(
     _rate_limit(request, upload_limit, "upload_chunk")
     if not _CHUNK_NAME_RE.match(sha256) or total < 1 or not 0 <= index < total:
         raise HTTPException(status_code=400, detail="invalid sha256/index/total")
+    selected = _parse_engines(engines)
     data = await file.read()
     if not data or len(data) > settings.max_upload_size:
         raise HTTPException(status_code=400, detail="empty or oversized chunk")
@@ -938,6 +1019,7 @@ async def upload_chunk(
         name or file.filename or "upload.bin",
         rescan,
         ephemeral,
+        selected,
     )
     return JSONResponse(
         status_code=200 if cached else 202,
@@ -982,6 +1064,7 @@ async def upload_ws(
     total = 0
     name = ""
     rescan = False
+    selected: frozenset[str] | None = None
     pending_index = -1
     pending_size = 0
     buf = bytearray()
@@ -1004,6 +1087,15 @@ async def upload_ws(
                     name = str(ctrl.get("name", ""))
                     rescan = bool(ctrl.get("rescan", False))
                     ephemeral = bool(ctrl.get("ephemeral", False))
+                    engines_ctl = ctrl.get("engines", "")
+                    engines_value = (
+                        ",".join(engines_ctl) if isinstance(engines_ctl, list) else str(engines_ctl)
+                    )
+                    try:
+                        selected = _parse_engines(engines_value)
+                    except HTTPException as exc:
+                        await fail(str(exc.detail))
+                        return
                     if not _CHUNK_NAME_RE.match(sha256) or total < 1:
                         await fail("invalid sha256/total")
                         return
@@ -1068,6 +1160,7 @@ async def upload_ws(
                         name or "upload.bin",
                         rescan,
                         ephemeral,
+                        selected,
                     )
                     await websocket.send_text(
                         json.dumps({"type": "done", "sha256": scan.sha256, "cached": cached})
@@ -1165,6 +1258,7 @@ def download(hash_value: str, db: Session = Depends(get_db)) -> FileResponse:
 def rescan(
     background_tasks: BackgroundTasks,
     hash_value: str,
+    engines: str = "",
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -1174,7 +1268,14 @@ def rescan(
     stored = Path(settings.upload_dir) / scan.sha256 if scan else None
     if scan is None or stored is None or not stored.exists():
         raise HTTPException(status_code=404, detail="stored sample not found")
-    _enqueue_scan(background_tasks, db, stored.read_bytes(), scan.file_name, rescan=True)
+    _enqueue_scan(
+        background_tasks,
+        db,
+        stored.read_bytes(),
+        scan.file_name,
+        rescan=True,
+        selected=_parse_engines(engines),
+    )
     return RedirectResponse(f"/ui/file/{scan.sha256}", status_code=303)
 
 
@@ -1277,6 +1378,7 @@ async def api_scan(
     file: UploadFile = File(...),
     rescan: bool = False,
     ephemeral: bool = False,
+    engines: str = "",
     db: Session = Depends(get_db),
     scanner: Scanner | None = Depends(
         _require_any_engine
@@ -1286,6 +1388,7 @@ async def api_scan(
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"detail": "empty file"})
+    selected = _parse_engines(engines)
     scan, cached = await to_thread.run_sync(
         _enqueue_scan,
         background_tasks,
@@ -1294,6 +1397,7 @@ async def api_scan(
         file.filename or "upload.bin",
         rescan,
         ephemeral,
+        selected,
     )
     return JSONResponse(
         status_code=200 if cached else 202,

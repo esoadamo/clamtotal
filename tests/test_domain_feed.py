@@ -477,7 +477,8 @@ def test_home_page_has_url_form_without_internals(client):
     assert 'action="/ui/url/lookup"' in home
     assert 'name="url"' in home
     # no feed/healthz/API internals shown to users on the home page
-    assert "domain feed" not in home.lower()
+    # (the engine picker's "Domain feed" checkbox is a user-facing choice, not a leak)
+    assert "feed.db" not in home and "DOMAIN_FEED" not in home
     assert "/healthz" not in home
     assert "home-api-bar" not in home
 

@@ -8,6 +8,12 @@ A [VirusTotal](https://www.virustotal.com)-style web app that scans uploaded
 files with **ClamAV** and YARA rules. Fully airgapped by default: no external
 API calls, CDNs, or telemetry at runtime.
 
+Every scan runs all enabled detection engines by default (ClamAV, YARA, the
+domain feed). Any submission — the web upload dialog, the chunked and
+WebSocket upload paths, `POST /api/v2/files`, and a rescan — can select which
+engines run with an `engines` parameter: a comma-separated list of engine ids
+(`clamav`, `yara`, `domain-feed`, or `all`).
+
 ## Run with one command
 
 ```sh
@@ -47,6 +53,7 @@ clone needed:
 ```sh
 uv tool install "git+https://github.com/esoadamo/clamtotal.git#subdirectory=clamtotal-client"
 clamtotal-client scan suspicious.exe --wait 120   # upload, poll, exit 2 if infected
+clamtotal-client scan suspicious.exe --engines clamav,yara   # run only the selected engines
 clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
 clamtotal-client url example.com
 ```

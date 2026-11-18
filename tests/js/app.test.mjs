@@ -50,6 +50,14 @@ test('modal open/close with a minimal DOM stub', () => {
   delete globalThis.document;
 });
 
+test('enginesParam: all/none checked means run every engine', () => {
+  assert.equal(CT.enginesParam(['clamav', 'yara', 'domain-feed'], 3), '');
+  assert.equal(CT.enginesParam(['clamav'], 3), 'clamav');
+  assert.equal(CT.enginesParam(['clamav', 'yara'], 3), 'clamav,yara');
+  assert.equal(CT.enginesParam([], 3), '');
+  assert.equal(CT.enginesParam(['clamav'], 0), '');
+});
+
 test('modal functions are safe without a document', () => {
   delete globalThis.document;
   assert.doesNotThrow(() => CT.openModal('t', 'b'));

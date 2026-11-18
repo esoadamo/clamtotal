@@ -261,6 +261,14 @@
     return String(value).replace(/http/gi, 'hxxp').replace(/\./g, '[.]');
   }
 
+  /* Engine selection from the home-page checkboxes: the `engines` request
+     parameter is a comma-separated id list; empty string means "run all engines"
+     (the default), so all-checked (or none-checked) sends nothing. */
+  function enginesParam(checkedIds, total) {
+    if (!total || !checkedIds.length || checkedIds.length === total) return '';
+    return checkedIds.join(',');
+  }
+
   /* POST one multipart chunk; resolves with {status, body}, rejects transiently on network errors. */
   function postChunk(url, fields, blob, onProgress) {
     return new Promise(function (resolve, reject) {
@@ -404,6 +412,16 @@
     var rescanSha = (form.dataset.rescanSha || '').toLowerCase();
     var ephemeralEnabled = form.dataset.ephemeral === '1';
 
+    function currentEngines() {
+      var boxes = global.document.querySelectorAll
+        ? global.document.querySelectorAll('#engine-picker .engine-check')
+        : [];
+      var total = boxes.length;
+      var checked = [];
+      for (var i = 0; i < total; i++) if (boxes[i].checked) checked.push(boxes[i].value);
+      return enginesParam(checked, total);
+    }
+
     function showError(msg) {
       if (progress && idle && errorBox) {
         progress.style.display = 'none';
@@ -415,12 +433,12 @@
 
     /* Large files: prefer a persistent WebSocket (small frames, no per-request proxy
        limits, resumable on reconnect); fall back to classic HTTP chunked upload. */
-    function startChunkedUpload(file, sha256, ephemeral) {
-      if (form.dataset.wsUpload === '1') return startWsUpload(file, sha256, ephemeral);
-      return startHttpChunkedUpload(file, sha256, ephemeral);
+    function startChunkedUpload(file, sha256, ephemeral, engines) {
+      if (form.dataset.wsUpload === '1') return startWsUpload(file, sha256, ephemeral, engines);
+      return startHttpChunkedUpload(file, sha256, ephemeral, engines);
     }
 
-    function startWsUpload(file, sha256, ephemeral) {
+    function startWsUpload(file, sha256, ephemeral, engines) {
       var wsChunkSize = parseInt(form.dataset.wsChunkSize || '0', 10);
       var plan = chunkPlan(file.size, wsChunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
@@ -457,7 +475,7 @@
           var ws = new global.WebSocket(wsUrl('/file/upload/ws'));
           var settled = false;
           ws.onopen = function () {
-            ws.send(JSON.stringify({ type: 'start', sha256: sha256, total: total, name: file.name, rescan: !!rescanSha, ephemeral: !!ephemeral }));
+            ws.send(JSON.stringify({ type: 'start', sha256: sha256, total: total, name: file.name, rescan: !!rescanSha, ephemeral: !!ephemeral, engines: engines ? engines.split(',') : [] }));
           };
           ws.onmessage = function (ev) {
             var msg;
@@ -498,12 +516,12 @@
       report();
       return attempt(3)
         .then(function () { global.location.href = '/ui/file/' + sha256; })
-        .catch(function () { return startHttpChunkedUpload(file, sha256, ephemeral); });
+        .catch(function () { return startHttpChunkedUpload(file, sha256, ephemeral, engines); });
     }
 
     /* HTTP chunked fallback: upload in chunks so no single request body exceeds the
        proxy's limit (e.g. Cloudflare). Server reassembles, verifies SHA-256, scans. */
-    function startHttpChunkedUpload(file, sha256, ephemeral) {
+    function startHttpChunkedUpload(file, sha256, ephemeral, engines) {
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
       var plan = chunkPlan(file.size, chunkSize);
       if (!plan.length) { showError('Chunked upload disabled on this server.'); return Promise.resolve(); }
@@ -535,6 +553,7 @@
           return postChunk('/file/upload/chunk', {
             sha256: sha256, index: String(part.index), total: String(total), name: file.name,
             rescan: rescanSha ? 'true' : 'false', ephemeral: ephemeral ? 'true' : 'false',
+            engines: engines || '',
           }, blob, function (frac) {
             inFlight[part.index] = (part.end - part.start) * frac;
             report();
@@ -564,7 +583,7 @@
         .catch(function () { clearInterval(ticker); /* error already shown */ });
     }
 
-    function startUpload(file, sha256, ephemeral) {
+    function startUpload(file, sha256, ephemeral, engines) {
       closeModal();
       if (idle) idle.style.display = 'none';
       if (errorBox) errorBox.style.display = 'none';
@@ -573,7 +592,7 @@
       if (status) status.textContent = uploadStatusText(file.name, 0);
       if (bar) bar.style.width = '0%';
       var chunkSize = parseInt(form.dataset.chunkSize || '0', 10);
-      if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256, ephemeral);
+      if (shouldUseChunks(file.size, chunkSize)) return startChunkedUpload(file, sha256, ephemeral, engines || '');
       var startedAt = Date.now();
       var lastLoaded = 0, lastTotal = file.size || 1;
       function renderUpload() {
@@ -584,10 +603,10 @@
         status.textContent = uploadStatusText(file.name, pct) +
           (pct >= 100 ? '' : uploadStatsSuffix(lastLoaded, lastTotal, startedAt, Date.now()));
       }
+      var qs = [rescanSha && 'rescan=true', ephemeral && 'ephemeral=true',
+        engines && ('engines=' + encodeURIComponent(engines))].filter(Boolean).join('&');
       var xhr = new global.XMLHttpRequest();
-      xhr.open('POST', form.action + (rescanSha || ephemeral
-        ? '?' + [rescanSha && 'rescan=true', ephemeral && 'ephemeral=true'].filter(Boolean).join('&')
-        : ''));
+      xhr.open('POST', form.action + (qs ? '?' + qs : ''));
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable) { lastLoaded = e.loaded; lastTotal = e.total; renderUpload(); }
       };
@@ -604,7 +623,7 @@
         // automatically retry as a chunked upload with a safe fallback chunk size.
         if (xhr.status === 413 && file.size > (chunkSize || FALLBACK_CHUNK_SIZE)) {
           form.dataset.chunkSize = String(chunkSize || FALLBACK_CHUNK_SIZE);
-          startChunkedUpload(file, sha256, ephemeral);
+          startChunkedUpload(file, sha256, ephemeral, engines || '');
           return;
         }
         showError('Upload failed (' + xhr.status + '): ' + xhr.responseText.slice(0, 200));
@@ -633,7 +652,7 @@
               '… — upload the exact original file to reanalyze.');
             return;
           }
-          startUpload(file, sha256); // upload immediately with rescan=true
+          startUpload(file, sha256, false, currentEngines()); // upload immediately with rescan=true
           return;
         }
         // Any failure here (404 = not analyzed yet, but also network errors or a
@@ -667,7 +686,7 @@
     if (confirmBtn) confirmBtn.addEventListener('click', function () {
       if (pendingFile) {
         var check = $('ephemeral-check');
-        startUpload(pendingFile.file, pendingFile.sha256, !!(check && check.checked));
+        startUpload(pendingFile.file, pendingFile.sha256, !!(check && check.checked), currentEngines());
       }
     });
     input.addEventListener('change', function () { if (input.files.length) onFileSelected(input.files[0]); });
@@ -695,6 +714,7 @@
     uploadStatusText: uploadStatusText,
     uploadStatsSuffix: uploadStatsSuffix,
     wsUrl: wsUrl,
+    enginesParam: enginesParam,
     runPool: runPool,
     withRetry: withRetry,
     FALLBACK_CHUNK_SIZE: FALLBACK_CHUNK_SIZE,

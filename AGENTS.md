@@ -20,7 +20,9 @@ external services, CDNs, fonts, or telemetry.
 ## Layout
 
 - `app/main.py` — the FastAPI app. It serves the HTML UI under `/ui/` and the
-  JSON API (`/file/upload`, `/api/v2/...`).
+  JSON API (`/file/upload`, `/api/v2/...`). Every upload path accepts an
+  `engines` parameter (comma-separated `clamav`, `yara`, `domain-feed`;
+  default `all`) that selects which engines run.
 - `app/config.py` — settings that come from environment variables
   (pydantic-settings).
 - `app/db.py` — the engine, `SessionLocal`, `get_db`, and `Base`.

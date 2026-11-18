@@ -121,6 +121,16 @@ def test_scan_rescan_ephemeral_flags_in_body(monkeypatch, requests, tmp_path):
     run(["scan", "--rescan", "--ephemeral", str(f)], monkeypatch, requests)
     body = requests[0].data
     assert b'name="rescan"' in body and b'name="ephemeral"' in body
+    assert b'name="engines"' not in body  # no selection -> all engines (default)
+
+
+def test_scan_engines_selection_in_body(monkeypatch, requests, tmp_path):
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    run(["scan", "--engines", "clamav,yara", str(f)], monkeypatch, requests)
+    body = requests[0].data
+    assert b'name="engines"' in body
+    assert b"clamav,yara" in body
 
 
 def test_scan_human_output_and_wait(monkeypatch, requests, capsys, tmp_path):

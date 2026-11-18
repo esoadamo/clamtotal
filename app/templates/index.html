@@ -34,6 +34,17 @@
             <div class="dz-or">or</div>
             <label class="btn" for="file-input">Choose file</label>
             <input id="file-input" type="file" name="file" required style="display:none">
+            {% if engine_choices %}
+            <div id="engine-picker" style="margin-top:16px">
+              <div class="muted" style="margin-bottom:6px">Engines to run (all by default):</div>
+              {% for e in engine_choices %}
+              <label style="display:inline-flex; gap:6px; align-items:center; margin:0 14px 6px 0; color:#374151">
+                <input type="checkbox" class="engine-check" value="{{ e.id }}" checked="checked" style="margin:0">
+                {{ e.label }}
+              </label>
+              {% endfor %}
+            </div>
+            {% endif %}
           </div>
           <div id="dz-progress" style="display:none">
             <div class="spinner" id="dz-spinner" style="display:none"></div>
