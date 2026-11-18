@@ -173,6 +173,24 @@
   .progress-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 14px; }
   .progress-bar { height: 100%; width: 0%; background: var(--accent); border-radius: 3px; transition: width 0.15s ease; }
   .dz-status { margin-top: 14px; font-size: 14px; color: var(--text); }
+  /* collapsible Advanced section (engine selection) under the upload dropzone */
+  .advanced { margin-top: 12px; text-align: left; }
+  .advanced summary {
+    cursor: pointer; user-select: none; list-style: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--brand); font-size: 14px; font-weight: 500;
+  }
+  .advanced summary::-webkit-details-marker { display: none; }
+  .advanced summary::before {
+    content: "\25B8"; font-size: 11px; transition: transform 0.15s ease;
+  }
+  .advanced[open] summary::before { transform: rotate(90deg); }
+  .advanced .engine-opt {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin: 10px 16px 0 0; font-size: 14px; color: var(--text); cursor: pointer;
+  }
+  .advanced .engine-opt input { accent-color: var(--brand); width: 16px; height: 16px; margin: 0; cursor: pointer; }
+  .advanced .engine-opt input:checked { border-color: var(--brand); }
 
   /* modal dialog */
   .modal-overlay {

@@ -142,11 +142,15 @@ def test_rescan_with_engine_selection(client):
 
 def test_home_page_shows_engine_picker(client):
     home = client.get("/ui/").text
+    # engine selection lives in a collapsed Advanced section below the dropzone
+    assert 'id="advanced-options"' in home
+    assert "<summary>Advanced</summary>" in home
     assert 'id="engine-picker"' in home
+    assert 'class="engine-opt"' in home
     assert 'class="engine-check"' in home
     assert 'value="clamav"' in home
     assert "ClamAV (fake)" in home  # label from the active scanner
-    assert "Engines to run (all by default)" in home
+    assert "all by default" not in home
 
 
 def test_engine_choices_include_yara_when_available(client, monkeypatch):
@@ -155,6 +159,7 @@ def test_engine_choices_include_yara_when_available(client, monkeypatch):
 
     monkeypatch.setattr(main_module, "get_yara_scanner", lambda: FakeYara())
     home = client.get("/ui/").text
+    assert "<summary>Advanced</summary>" in home
     assert 'value="yara"' in home
     assert "YARA (fake)" in home
     # the same fake also makes yara a valid `engines` selection on the API
