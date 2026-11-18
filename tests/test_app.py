@@ -192,3 +192,24 @@ def test_report_legacy_row_without_sample_shows_zero_entropy(client):
         scan = db.get(Scan, sha256)
         assert scan is not None
         assert scan.entropy is None
+
+
+def test_upload_capabilities(client, monkeypatch):
+    from app.config import settings
+
+    assert settings.chunk_upload_size > 0  # the default enables the chunked path
+    caps = client.get("/api/v2/upload/capabilities")
+    assert caps.status_code == 200
+    body = caps.json()
+    assert body == {
+        "max_upload_size": settings.max_upload_size,
+        "chunked": True,
+        "chunk_size": settings.chunk_upload_size,
+        "websocket": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
+        "ws_chunk_size": settings.ws_chunk_size,
+    }
+    monkeypatch.setattr(settings, "chunk_upload_size", 0)
+    monkeypatch.setattr(settings, "ws_upload_enabled", False)
+    body = client.get("/api/v2/upload/capabilities").json()
+    assert body["chunked"] is False and body["chunk_size"] == 0
+    assert body["websocket"] is False and body["ws_chunk_size"] >= 0

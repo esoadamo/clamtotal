@@ -127,3 +127,14 @@ class ChunkUploadResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class UploadCapabilities(BaseModel):
+    """GET /api/v2/upload/capabilities — lets clients (clamtotal-client) pick the
+    best transport: direct POST, HTTP-chunked, or WebSocket."""
+
+    max_upload_size: int = Field(description="hard size cap for any upload path, bytes")
+    chunked: bool = Field(description="true when POST /file/upload/chunk is enabled")
+    chunk_size: int = Field(description="recommended HTTP chunk size, bytes (0 when disabled)")
+    websocket: bool = Field(description="true when /file/upload/ws is enabled")
+    ws_chunk_size: int = Field(description="recommended WS frame size, bytes (0 when disabled)")

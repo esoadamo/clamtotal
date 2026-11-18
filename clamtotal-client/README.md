@@ -11,16 +11,29 @@ uv tool install "git+https://github.com/esoadamo/clamtotal.git#subdirectory=clam
 Zero runtime dependencies (stdlib only), so it installs and runs fully airgapped.
 A local clone can also be installed with `uv tool install ./clamtotal-client`.
 
+The client picks the best upload transport the server supports (it probes
+`GET /api/v2/upload/capabilities`): one direct `POST /api/v2/files` for small
+files, HTTP chunked upload behind body-size-limiting proxies, or a single
+persistent WebSocket with resumable chunks for large ones. If the WebSocket
+fails mid-upload it degrades to HTTP chunks (the server shares the chunk
+storage, so the retry resumes).
+
 While a file is being uploaded, a live progress line (`uploading sample.zip: 42%
-(4.2 MB of 10 MB)`) is redrawn in place on **stderr**; stdout stays clean for
-`--json` and piping. Use `--no-progress` to hide it.
+(4.2 MB of 10 MB, 1.8 MB/s, eta 3s)`) is redrawn in place on **stderr**; stdout
+stays clean for `--json` and piping. Use `--no-progress` to hide it.
+
+After the upload the client waits for the analysis to finish and prints the
+verdict (exit `2` when any enabled engine detects something, `1` when one
+never delivered a verdict, `0` only when they all finished clean).
+`--no-wait-result` skips the waiting and prints the upload response only.
 
 ## Usage
 
 ```sh
 # scan one or more files (uploads to POST /api/v2/files)
-clamtotal-client scan suspicious.exe
-clamtotal-client scan sample.zip --rescan --wait 120   # poll until done, exit 2 if infected
+clamtotal-client scan suspicious.exe                  # upload, wait, print the verdict
+clamtotal-client scan sample.zip --rescan --wait 120   # cap the wait at 120s
+clamtotal-client scan huge.iso --no-wait-result        # fire-and-forget (upload response only)
 clamtotal-client scan suspicious.exe --engines clamav,yara   # run only the selected engines (default: all)
 clamtotal-client scan big.iso --no-progress    # hide the upload progress indicator
 
@@ -31,7 +44,10 @@ clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
 clamtotal-client url example.com
 ```
 
-Exit codes: `0` success, `1` request/read error, `2` analyzed sample (or URL) is malicious.
+Exit codes: `0` success (for `scan`: every enabled engine finished and found no
+detection), `1` request/read error or an inconclusive verdict (an engine timed
+out, or the wait expired before the scan finished), `2` the analyzed sample (or
+URL) is malicious.
 
 ## Options
 
@@ -52,11 +68,12 @@ Global options (apply to every command):
 | `--ephemeral`| Do not persist the sample (deleted after the scan and one report view)              |
 | `--engines`  | Comma-separated engines to run: `clamav`, `yara`, `domain-feed` (default: all)    |
 | `--no-progress` | Hide the upload progress indicator on stderr (shown by default)           |
-| `--wait`     | Poll until the analysis finishes (max seconds), then print the verdict             |
+| `--no-wait-result` | Print only the upload response; do not wait for the scan result        |
+| `--wait`     | Max seconds to wait for the analysis (default: 300)                                 |
 | `--json`     | Print the raw JSON response(s) instead of the human-readable summary              |
 
-`describe` and `url` accept `--json` for raw output. `--wait` also works with
-`--json` (prints the final report as JSON).
+`describe` and `url` accept `--json` for raw output. `--json` combined with the
+result wait prints the final report as JSON.
 
 ## Configuration
 

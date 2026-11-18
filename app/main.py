@@ -72,6 +72,7 @@ from app.schemas import (
     ErrorResponse,
     FileReport,
     HealthResponse,
+    UploadCapabilities,
     UploadResponse,
     UrlReport,
     UrlScanResponse,
@@ -1442,6 +1443,19 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db)) -> Resp
     return templates.TemplateResponse(
         request, "search.html", {"q": q, "results": results, "url_scan": url_scan}
     )
+
+
+@app.get("/api/v2/upload/capabilities", response_model=UploadCapabilities)
+def api_upload_capabilities() -> dict:
+    """Transport negotiation for API clients: which upload paths exist and their
+    chunk sizes, so a client can pick direct/chunked/websocket before sending."""
+    return {
+        "max_upload_size": settings.max_upload_size,
+        "chunked": settings.chunk_upload_size > 0,
+        "chunk_size": settings.chunk_upload_size,
+        "websocket": settings.ws_upload_enabled and settings.ws_chunk_size > 0,
+        "ws_chunk_size": settings.ws_chunk_size,
+    }
 
 
 @app.post(

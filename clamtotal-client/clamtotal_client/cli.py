@@ -3,15 +3,24 @@
 Every option falls back to an environment variable: --url -> CLAMTOTAL_URL
 (default https://clamtotal.com), --timeout -> CLAMTOTAL_TIMEOUT,
 --token -> CLAMTOTAL_API_KEY, --engines (scan) -> CLAMTOTAL_ENGINES.
+
+`scan` picks the best upload transport the server supports (direct,
+HTTP-chunked, or WebSocket; see GET /api/v2/upload/capabilities), shows a
+live progress line with speed and ETA while uploading, then polls until the
+analysis is finished and prints the verdict. `--no-wait-result` skips the
+waiting and prints only the upload response.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 import time
 
 from . import __version__, api
+
+WAIT_RESULT_DEFAULT = 300.0
 
 
 def _opt(value, env, default):
@@ -55,7 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--wait",
         type=float,
         metavar="SECONDS",
-        help="poll until the analysis finishes (max seconds), then print the verdict",
+        help=f"max seconds to wait for the analysis (default: {WAIT_RESULT_DEFAULT:g})",
+    )
+    scan.add_argument(
+        "--no-wait-result",
+        action="store_true",
+        help="print the upload response only; do not wait for the scan result",
     )
     scan.add_argument("--json", action="store_true", help="print raw JSON responses")
 
@@ -77,19 +91,42 @@ def _print_scan_result(result: dict, as_json: bool) -> None:
     print(f"sha256: {result.get('sha256', '?')}  status: {status}")
 
 
-def _wait_for_verdict(args: argparse.Namespace, sha256: str) -> int:
-    deadline = time.monotonic() + (args.wait or 0)
+def _wait_for_report(args: argparse.Namespace, sha256: str, budget: float) -> dict:
+    deadline = time.monotonic() + budget
     while True:
         report = api.get_report(args.base_url, sha256, token=args.token, timeout=args.timeout)
         if report.get("status") != "pending" or time.monotonic() >= deadline:
-            if args.json:
-                print(json.dumps(report, indent=2))
-            else:
-                verdict = report.get("verdict", "?")
-                sig = report.get("signature") or "no signature"
-                print(f"verdict: {verdict}  signature: {sig}")
-            return 2 if report.get("verdict") == "infected" else 0
+            return report
         time.sleep(1.0)
+
+
+def _report_exit_code(report: dict) -> tuple[int, list[str]]:
+    """0 only when every enabled engine finished and reported no detection.
+    Any infection -> 2. An engine that never delivered its verdict (still
+    scanning, timed out, report pending) -> 1, because 'clean' is unproven.
+    Servers without per-engine dicts fall back to the overall verdict/status."""
+    engines = [e for e in report.get("engines") or [] if isinstance(e, dict)]
+    if report.get("verdict") == "infected" or any(e.get("verdict") == "infected" for e in engines):
+        return 2, []
+    if not engines:
+        return (0, []) if report.get("status") == "done" else (1, [])
+    unfinished = [e.get("name", "?") for e in engines if e.get("status") != "done"]
+    return (0, []) if not unfinished else (1, unfinished)
+
+
+def _show_report(report: dict, as_json: bool, timed_out: bool) -> int:
+    if as_json:
+        print(json.dumps(report, indent=2))
+    else:
+        verdict = report.get("verdict", "?")
+        sig = report.get("signature") or "no signature"
+        print(f"verdict: {verdict}  signature: {sig}")
+    code, unfinished = _report_exit_code(report)
+    if timed_out:
+        print(f"scan still pending (sha256: {report.get('sha256', '?')})", file=sys.stderr)
+    elif unfinished:
+        print(f"no clean verdict from: {', '.join(unfinished)}", file=sys.stderr)
+    return code
 
 
 def _fmt_bytes(n: int) -> str:
@@ -103,14 +140,35 @@ def _fmt_bytes(n: int) -> str:
     return f"{round(value, 1):g} {units[unit]}"
 
 
-def _progress_printer(path: str):
-    """Live 'uploading x.exe: 42% (4.2/10 MB)' line on stderr, redrawn in place."""
+def _fmt_eta(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds >= 60:
+        return f"{seconds // 60}m {seconds % 60}s"
+    return f"{seconds}s"
+
+
+def _progress_printer(path: str, transport: str):
+    """Live upload line on stderr, redrawn in place. Reports the transfer rate
+    and ETA once enough bytes have flowed to estimate them."""
     name = os.path.basename(path)
+    label = {
+        "direct": "uploading",
+        "chunked": "uploading (chunked)",
+        "websocket": "uploading (ws)",
+    }[transport]
+    start = time.monotonic()
 
     def report(sent: int, total: int) -> None:
         pct = min(100, sent * 100 // max(total, 1))
+        stats = ""
+        elapsed = time.monotonic() - start
+        rate = sent / elapsed if elapsed > 0.25 else 0
+        if rate > 0:
+            stats = f", {_fmt_bytes(int(rate))}/s"
+            if sent < total:
+                stats += f", eta {_fmt_eta((total - sent) / rate)}"
         print(
-            f"\ruploading {name}: {pct}% ({_fmt_bytes(sent)} of {_fmt_bytes(total)})",
+            f"\r{label} {name}: {pct}% ({_fmt_bytes(sent)} of {_fmt_bytes(total)}){stats}   ",
             end="",
             file=sys.stderr,
             flush=True,
@@ -119,41 +177,129 @@ def _progress_printer(path: str):
     return report
 
 
-def cmd_scan(args: argparse.Namespace) -> int:
-    exit_code = 0
-    for path in args.file:
+def _choose_transport(size: int, caps: dict) -> str:
+    """Best transport for this file given what the server supports: one request
+    for small files; the resumable single-connection WebSocket for large ones;
+    HTTP chunks when the WS path is unavailable."""
+    if not caps.get("chunked") or caps.get("chunk_size", 0) <= 0:
+        return "direct"  # no chunking possible: one whole-file request
+    if size <= caps["chunk_size"]:
+        return "direct"
+    if caps.get("websocket") and caps.get("ws_chunk_size", 0) > 0:
+        return "websocket"
+    return "chunked"
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _upload(args: argparse.Namespace, path: str, size: int, caps: dict, show_progress: bool):
+    transport = _choose_transport(size, caps)
+    while True:
+        progress = _progress_printer(path, transport) if show_progress else None
         try:
             with open(path, "rb") as fh:
-                content = fh.read()
+                if transport == "direct":
+                    return api.post_file(
+                        args.base_url,
+                        "/api/v2/files",
+                        os.path.basename(path),
+                        fh.read(),
+                        token=args.token,
+                        timeout=args.timeout,
+                        rescan=args.rescan,
+                        ephemeral=args.ephemeral,
+                        engines=args.engines,
+                        progress=progress,
+                    )
+                sha256 = _sha256_file(path)
+                if transport == "websocket":
+                    return api.upload_ws(
+                        args.base_url,
+                        fh,
+                        os.path.basename(path),
+                        size,
+                        sha256,
+                        caps["ws_chunk_size"],
+                        token=args.token,
+                        timeout=args.timeout,
+                        rescan=args.rescan,
+                        ephemeral=args.ephemeral,
+                        engines=args.engines,
+                        progress=progress,
+                    )
+                return api.post_file_chunked(
+                    args.base_url,
+                    fh,
+                    os.path.basename(path),
+                    size,
+                    sha256,
+                    caps["chunk_size"],
+                    token=args.token,
+                    timeout=args.timeout,
+                    rescan=args.rescan,
+                    ephemeral=args.ephemeral,
+                    engines=args.engines,
+                    progress=progress,
+                )
+        except api.ClientError:
+            # the websocket path degrades to HTTP chunks (the server shares the
+            # chunk storage, so a retried chunk set resumes instead of restarting)
+            if transport == "websocket" and caps.get("chunked"):
+                caps = dict(caps, websocket=False)
+                transport = "chunked"
+                continue
+            raise
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    exit_code = 0
+    args.engines = _opt(args.engines, "CLAMTOTAL_ENGINES", None) or ""
+    for path in args.file:
+        try:
+            size = os.path.getsize(path)
         except OSError as exc:
             print(f"error: cannot read {path}: {exc}", file=sys.stderr)
             exit_code = 1
             continue
         show_progress = not args.no_progress
         try:
-            result = api.post_file(
-                args.base_url,
-                "/api/v2/files",
-                os.path.basename(path),
-                content,
-                token=args.token,
-                timeout=args.timeout,
-                rescan=args.rescan,
-                ephemeral=args.ephemeral,
-                engines=_opt(args.engines, "CLAMTOTAL_ENGINES", None) or "",
-                progress=_progress_printer(path) if show_progress else None,
-            )
+            caps = api.get_capabilities(args.base_url, token=args.token, timeout=args.timeout)
+        except api.ClientError:
+            caps = {}  # an older server without the endpoint: whole-file POST only
+        try:
+            result = _upload(args, path, size, caps, show_progress)
         except api.ClientError as exc:
             if show_progress:
                 print(file=sys.stderr, flush=True)  # close the progress line
             print(f"error: {exc}", file=sys.stderr)
             exit_code = 1
             continue
+        except OSError as exc:
+            if show_progress:
+                print(file=sys.stderr, flush=True)
+            print(f"error: cannot read {path}: {exc}", file=sys.stderr)
+            exit_code = 1
+            continue
         if show_progress:
             print(file=sys.stderr, flush=True)  # close the progress line
-        _print_scan_result(result, args.json)
-        if args.wait is not None and result.get("status") != "done":
-            exit_code = exit_code or _wait_for_verdict(args, result["sha256"])
+        if args.no_wait_result:
+            _print_scan_result(result, args.json)
+            continue
+        sha256 = result.get("sha256")
+        if not sha256:  # no waitable id in the response: show it and move on
+            _print_scan_result(result, args.json)
+            exit_code = exit_code or 1
+            continue
+        budget = args.wait if args.wait is not None else WAIT_RESULT_DEFAULT
+        report = _wait_for_report(args, sha256, budget)
+        timed_out = report.get("status") == "pending"
+        exit_code = exit_code or _show_report(report, args.json, timed_out)
     return exit_code
 
 
@@ -165,11 +311,11 @@ def cmd_describe(args: argparse.Namespace) -> int:
         return 1
     if args.json:
         print(json.dumps(report, indent=2))
-    verdict = report.get("verdict", "?")
-    if not args.json:
+        verdict = report.get("verdict", "?")
+    else:
+        verdict = report.get("verdict", "?")
         print(f"verdict:   {verdict}  ({report.get('signature') or 'no signature'})")
         print(f"file:      {report.get('file_name', '?')}  ({report.get('size', '?')} bytes)")
-    if not args.json:
         print(f"type:      {report.get('file_type', '?')}")
         print(f"engines:   {', '.join(report.get('engines', [])) or '?'}")
         for algo in ("sha256", "sha1", "md5", "sha512", "crc32"):
