@@ -8,7 +8,12 @@ Every option falls back to an environment variable: --url -> CLAMTOTAL_URL
 HTTP-chunked, or WebSocket; see GET /api/v2/upload/capabilities), shows a
 live progress line with speed and ETA while uploading, then polls until the
 analysis is finished and prints the verdict. `--no-wait-result` skips the
-waiting and prints only the upload response.
+waiting and prints only the upload response. A hash the server already knows
+(pending or analyzed) is not uploaded again unless `--rescan` is passed.
+
+`describe <file>` hashes a local file and shows its report (uploading it only
+when the server does not know it yet, or with `--rescan`); `describe --hash`
+looks a hash up and never uploads.
 """
 
 import argparse
@@ -73,8 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("--json", action="store_true", help="print raw JSON responses")
 
-    describe = sub.add_parser("describe", help="show the report for a hash")
-    describe.add_argument("hash", help="MD5 / SHA-1 / SHA-256 of a known sample")
+    describe = sub.add_parser(
+        "describe",
+        help="show the report for a file or a hash; uploads the file only when unknown",
+    )
+    describe.add_argument(
+        "target", nargs="?", help="local file path, or a MD5 / SHA-1 / SHA-256 of a known sample"
+    )
+    describe.add_argument(
+        "--hash", metavar="SHA", help="describe this hash (never upload anything)"
+    )
+    describe.add_argument(
+        "--rescan", action="store_true", help="re-analyze the file (uploads it again)"
+    )
     describe.add_argument("--json", action="store_true", help="print raw JSON report")
 
     url_cmd = sub.add_parser("url", help="check a URL/domain against the domain feed")
@@ -198,7 +214,14 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _upload(args: argparse.Namespace, path: str, size: int, caps: dict, show_progress: bool):
+def _upload(
+    args: argparse.Namespace,
+    path: str,
+    size: int,
+    caps: dict,
+    show_progress: bool,
+    sha256: str | None = None,
+):
     transport = _choose_transport(size, caps)
     while True:
         progress = _progress_printer(path, transport) if show_progress else None
@@ -217,7 +240,7 @@ def _upload(args: argparse.Namespace, path: str, size: int, caps: dict, show_pro
                         engines=args.engines,
                         progress=progress,
                     )
-                sha256 = _sha256_file(path)
+                sha256 = sha256 or _sha256_file(path)
                 if transport == "websocket":
                     return api.upload_ws(
                         args.base_url,
@@ -269,23 +292,45 @@ def cmd_scan(args: argparse.Namespace) -> int:
             continue
         show_progress = not args.no_progress
         try:
-            caps = api.get_capabilities(args.base_url, token=args.token, timeout=args.timeout)
-        except api.ClientError:
-            caps = {}  # an older server without the endpoint: whole-file POST only
-        try:
-            result = _upload(args, path, size, caps, show_progress)
-        except api.ClientError as exc:
-            if show_progress:
-                print(file=sys.stderr, flush=True)  # close the progress line
-            print(f"error: {exc}", file=sys.stderr)
-            exit_code = 1
-            continue
+            sha256 = _sha256_file(path)
         except OSError as exc:
-            if show_progress:
-                print(file=sys.stderr, flush=True)
             print(f"error: cannot read {path}: {exc}", file=sys.stderr)
             exit_code = 1
             continue
+        existing = None
+        if not args.rescan:  # a known (or already queued) hash: no need to upload again
+            try:
+                existing = api.get_report(
+                    args.base_url, sha256, token=args.token, timeout=args.timeout
+                )
+            except api.ClientError:
+                existing = None
+        if existing is not None:
+            print(
+                f"{os.path.basename(path)}: {sha256} already analyzed on the server;"
+                " not re-uploading (use --rescan to force a new analysis)",
+                file=sys.stderr,
+            )
+            result = existing
+        else:
+            try:
+                caps = api.get_capabilities(args.base_url, token=args.token, timeout=args.timeout)
+            except api.ClientError:
+                caps = {}  # an older server without the endpoint: whole-file POST only
+            try:
+                result = _upload(args, path, size, caps, show_progress, sha256=sha256)
+            except api.ClientError as exc:
+                if show_progress:
+                    print(file=sys.stderr, flush=True)  # close the progress line
+                print(f"error: {exc}", file=sys.stderr)
+                exit_code = 1
+                continue
+            except OSError as exc:
+                if show_progress:
+                    print(file=sys.stderr, flush=True)
+                print(f"error: cannot read {path}: {exc}", file=sys.stderr)
+                exit_code = 1
+                continue
         if show_progress:
             print(file=sys.stderr, flush=True)  # close the progress line
         if args.no_wait_result:
@@ -304,20 +349,71 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_describe(args: argparse.Namespace) -> int:
-    try:
-        report = api.get_report(args.base_url, args.hash, token=args.token, timeout=args.timeout)
-    except api.ClientError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    """Describe a local file or a hash. The hash of an existing file is used
+    directly (uploading again only when the server does not know the sample or
+    --rescan was passed); a bare --hash lookup never uploads. --rescan without
+    a sample file is impossible: the daemon rescans only what it can read."""
+    target = args.hash or (args.target or "").strip()
+    if not target:
+        print("error: describe needs a local file or --hash", file=sys.stderr)
         return 1
+    path = None
+    if args.hash is None:  # a real local file wins over hash-shaped input
+        try:
+            if os.path.isfile(args.target):
+                path = args.target
+        except (OSError, TypeError):
+            path = None
+    try:
+        sha256 = _sha256_file(path) if path else target
+    except OSError as exc:
+        print(f"error: cannot read {path}: {exc}", file=sys.stderr)
+        return 1
+    report = None
+    try:
+        report = api.get_report(args.base_url, sha256, token=args.token, timeout=args.timeout)
+    except api.ClientError as exc:
+        if path is None:  # nothing to fall back to: report the lookup failure
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    if args.rescan or report is None:
+        if path is None:
+            print(
+                f"error: no report for {target}; pass the sample file instead of --hash"
+                " so it can be analyzed",
+                file=sys.stderr,
+            )
+            return 1
+        args.engines = _opt(None, "CLAMTOTAL_ENGINES", None) or ""
+        args.ephemeral = False
+        try:
+            size = os.path.getsize(path)
+        except OSError as exc:
+            print(f"error: cannot read {path}: {exc}", file=sys.stderr)
+            return 1
+        try:
+            caps = api.get_capabilities(args.base_url, token=args.token, timeout=args.timeout)
+        except api.ClientError:
+            caps = {}
+        try:
+            result = _upload(args, path, size, caps, False)
+        except (api.ClientError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        sha256 = result.get("sha256") or sha256
+        report = _wait_for_report(args, sha256, WAIT_RESULT_DEFAULT)
     if args.json:
         print(json.dumps(report, indent=2))
-        verdict = report.get("verdict", "?")
     else:
-        verdict = report.get("verdict", "?")
-        print(f"verdict:   {verdict}  ({report.get('signature') or 'no signature'})")
+        sig = report.get("signature") or "no signature"
+        print(f"verdict:   {report.get('verdict', '?')}  ({sig})")
         print(f"file:      {report.get('file_name', '?')}  ({report.get('size', '?')} bytes)")
         print(f"type:      {report.get('file_type', '?')}")
-        print(f"engines:   {', '.join(report.get('engines', [])) or '?'}")
+        engines = ", ".join(
+            e.get("name", "?") if isinstance(e, dict) else str(e)
+            for e in report.get("engines") or []
+        )
+        print(f"engines:   {engines or '?'}")
         for algo in ("sha256", "sha1", "md5", "sha512", "crc32"):
             print(f"{algo + ':':<10} {report.get(algo, '?')}")
         urls = report.get("urls") or []
@@ -325,7 +421,12 @@ def cmd_describe(args: argparse.Namespace) -> int:
             print("urls:")
             for u in urls:
                 print(f"  {u}")
-    return 2 if verdict == "infected" else 0
+    code, unfinished = _report_exit_code(report)
+    if report.get("status") == "pending":
+        print(f"scan still pending (sha256: {report.get('sha256', '?')})", file=sys.stderr)
+    elif unfinished:
+        print(f"no clean verdict from: {', '.join(unfinished)}", file=sys.stderr)
+    return code
 
 
 def cmd_url(args: argparse.Namespace) -> int:

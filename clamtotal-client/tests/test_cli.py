@@ -44,19 +44,45 @@ def requests(monkeypatch):
                     }
                 ).encode()
             )
-        if "/api/v2/files/" in req.full_url and "e" * 64 in req.full_url:
-            polls.append(1)
-            resp = (
-                {"sha256": "e" * 64, "status": "pending"}
-                if len(polls) < 2
-                else {
-                    "sha256": "e" * 64,
-                    "status": "done",
+        if "/api/v2/files/" in req.full_url:
+            hash_value = req.full_url.rsplit("/", 1)[-1]
+            if hash_value == "e" * 64:
+                polls.append(1)
+                resp = (
+                    {"sha256": "e" * 64, "status": "pending"}
+                    if len(polls) < 2
+                    else {
+                        "sha256": "e" * 64,
+                        "status": "done",
+                        "verdict": "infected",
+                        "signature": "Eicar-Test-Signature",
+                    }
+                )
+                return FakeResponse(json.dumps(resp).encode())
+            if hash_value == "a" * 64:
+                resp = {
+                    "sha256": "a" * 64,
+                    "md5": "m",
+                    "sha1": "s",
+                    "sha512": "5",
+                    "crc32": "c",
+                    "file_name": "a.txt",
+                    "size": 3,
+                    "file_type": "text",
                     "verdict": "infected",
+                    "status": "done",
                     "signature": "Eicar-Test-Signature",
+                    "engines": ["clamav", "yara"],
+                    "urls": ["hxxp://evil[.]com"],
                 }
+                return FakeResponse(json.dumps(resp).encode())
+            raise urllib.error.HTTPError(  # unknown hash: sample not on the server
+                req.full_url,
+                404,
+                "Not Found",
+                email.message.Message(),
+                FakeResponse(b'{"detail": "not found"}'),
             )
-            return FakeResponse(json.dumps(resp).encode())
         if req.full_url.endswith("/api/v2/files"):
             if b"eicar" in body:
                 resp = {"sha256": "e" * 64, "md5": "m", "sha1": "s", "status": "pending"}
@@ -64,30 +90,6 @@ def requests(monkeypatch):
                 resp = {"sha256": "a" * 64, "md5": "m", "sha1": "s", "status": "done"}
         elif "/file/upload/chunk" in req.full_url:
             resp = {"sha256": "a" * 64, "status": "done", "cached": True}
-        elif "/api/v2/files/" in req.full_url:
-            if "missing" in req.full_url:
-                raise urllib.error.HTTPError(
-                    req.full_url,
-                    404,
-                    "Not Found",
-                    email.message.Message(),
-                    FakeResponse(b'{"detail": "not found"}'),
-                )
-            resp = {
-                "sha256": "a" * 64,
-                "md5": "m",
-                "sha1": "s",
-                "sha512": "5",
-                "crc32": "c",
-                "file_name": "a.txt",
-                "size": 3,
-                "file_type": "text",
-                "verdict": "infected",
-                "status": "done",
-                "signature": "Eicar-Test-Signature",
-                "engines": ["clamav", "yara"],
-                "urls": ["hxxp://evil[.]com"],
-            }
         elif req.full_url.endswith("/api/v2/urls"):
             resp = {
                 "id": "dXJs",
@@ -160,17 +162,16 @@ def test_scan_capabilities_probed_with_token(monkeypatch, requests, tmp_path):
     f = tmp_path / "c.txt"
     f.write_text("hi")
     assert run(["scan", "--no-wait-result", str(f)]) == 0
-    caps_req = requests[0]
+    caps_req = requests[0]  # the pre-check GET may come before the probe
+    if not caps_req.full_url.endswith("/api/v2/upload/capabilities"):
+        caps_req = requests[1]
     assert caps_req.full_url == "https://clamtotal.com/api/v2/upload/capabilities"
     assert caps_req.headers["X-api-key"] == "secret"
     assert upload_reqs(requests)[0].full_url == "https://clamtotal.com/api/v2/files"
 
 
 def test_scan_caps_404_falls_back_to_direct(monkeypatch, capsys, tmp_path):
-    calls = []
-
     def fake_urlopen(req, timeout=None):
-        calls.append(req.full_url)
         if req.full_url.endswith("/api/v2/upload/capabilities"):
             raise urllib.error.HTTPError(
                 req.full_url,
@@ -184,9 +185,19 @@ def test_scan_caps_404_falls_back_to_direct(monkeypatch, capsys, tmp_path):
             body = b"".join(body)
         if req.full_url.endswith("/api/v2/files"):
             assert b'name="sha256"' not in body  # plain whole-file POST, not chunked
-            return FakeResponse(json.dumps({"sha256": "a" * 64, "status": "done"}).encode())
+            return FakeResponse(json.dumps({"sha256": "a" * 64, "status": "pending"}).encode())
+        if req.full_url.rsplit("/", 1)[-1] != "a" * 64:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                404,
+                "Not Found",
+                email.message.Message(),
+                FakeResponse(b'{"detail": "not found"}'),
+            )
         return FakeResponse(
-            json.dumps({"sha256": "a" * 64, "status": "done", "verdict": "clean"}).encode()
+            json.dumps(
+                {"sha256": "a" * 64, "status": "done", "verdict": "clean", "engines": []}
+            ).encode()
         )
 
     monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
@@ -238,7 +249,7 @@ def test_scan_human_output_and_wait(monkeypatch, requests, capsys, tmp_path):
     assert code == 2
     assert "verdict: infected  signature: Eicar-Test-Signature" in out
     assert len(upload_reqs(requests)) == 1
-    assert len(requests) == 4  # caps + POST + two polls
+    assert len(requests) == 5  # caps + pre-check + POST + two polls
 
 
 def test_scan_waits_by_default_without_flag(monkeypatch, requests, capsys, tmp_path):
@@ -390,7 +401,7 @@ def test_scan_wait_cached_does_not_poll(monkeypatch, requests, capsys, tmp_path)
     f.write_text("hi")
     run(["scan", "--wait", "5", str(f)])
     assert len(upload_reqs(requests)) == 1
-    assert len(requests) == 3  # caps + upload + one report fetch (cached: done)
+    assert len(requests) == 4  # caps + pre-check + upload + one report fetch (done)
     assert "verdict: infected" in capsys.readouterr().out
 
 
@@ -435,6 +446,198 @@ def test_scan_upload_oserror(monkeypatch, requests, capsys, tmp_path):
     assert run(["scan", str(f)]) == 1  # progress line is open: it must be closed
     err = capsys.readouterr().err
     assert "cannot read" in err and err.count("\n") == 2  # the progress line + error
+
+
+def test_scan_skips_upload_when_report_known(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "known.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: "a" * 64)
+    assert run(["scan", str(f)]) == 2
+    captured = capsys.readouterr()
+    assert "not re-uploading" in captured.err
+    assert "verdict: infected" in captured.out
+    assert upload_reqs(requests) == []  # the server already had the sample
+    assert len(requests) == 2  # pre-check + the wait's report fetch, nothing sent
+
+
+def test_scan_rescan_uploads_even_when_report_known(monkeypatch, requests, tmp_path):
+    f = tmp_path / "known.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: "a" * 64)
+    run(["scan", "--rescan", str(f)])
+    assert len(upload_reqs(requests)) == 1
+    assert b'name="rescan"' in req_body(upload_reqs(requests)[0])
+
+
+def test_scan_skips_upload_when_scan_already_pending(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "pending.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: "e" * 64)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    assert run(["scan", str(f)]) == 2  # waits for the running scan, no upload
+    assert upload_reqs(requests) == []
+    # the pre-check consumed the first poll, the wait loop the second (done)
+    assert len([r for r in requests if "/api/v2/files/" in r.full_url]) == 2
+
+
+def test_describe_hash_flag(monkeypatch, requests, capsys):
+    assert run(["describe", "--hash", "a" * 64]) == 2
+    out = capsys.readouterr().out
+    assert "verdict:   infected" in out
+    assert requests[0].full_url.endswith("/api/v2/files/" + "a" * 64)
+
+
+def test_describe_rescan_hash_without_file(monkeypatch, requests, capsys):
+    assert run(["describe", "--rescan", "--hash", "a" * 64]) == 1
+    assert "pass the sample file" in capsys.readouterr().err
+
+
+def test_describe_no_target(monkeypatch, requests, capsys):
+    assert run(["describe"]) == 1
+    assert "needs a local file or --hash" in capsys.readouterr().err
+
+
+def test_describe_file_known_skips_upload(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "known.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: "a" * 64)
+    assert run(["describe", str(f)]) == 2
+    out = capsys.readouterr().out
+    assert "verdict:   infected" in out
+    assert upload_reqs(requests) == []  # hash lookup only, no bytes sent
+
+
+def test_describe_file_unknown_uploads_and_waits(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "fresh.txt"
+    f.write_text("brand new sample")  # unknown hash -> the client must analyze it
+    assert run(["describe", str(f)]) == 2
+    assert len(upload_reqs(requests)) == 1
+    out = capsys.readouterr().out
+    assert "verdict:   infected" in out
+    assert b'name="rescan"' not in req_body(upload_reqs(requests)[0])
+
+
+def test_describe_file_rescan_rereads_and_uploads(monkeypatch, requests, tmp_path):
+    f = tmp_path / "known.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: "a" * 64)
+    assert run(["describe", "--rescan", str(f)]) == 2
+    uploads = upload_reqs(requests)
+    assert len(uploads) == 1
+    assert b'name="rescan"' in req_body(uploads[0])
+
+
+def test_describe_unfinished_engine_gets_note(monkeypatch, capsys):
+    monkeypatch.setattr(
+        api,
+        "get_report",
+        lambda *a, **k: {
+            "sha256": "a" * 64,
+            "status": "done",
+            "verdict": "clean",
+            "engines": [
+                {"name": "ClamAV", "status": "done", "verdict": "clean"},
+                {"name": "YARA", "status": "timed out"},
+            ],
+        },
+    )
+    assert run(["describe", "--hash", "a" * 64]) == 1
+    assert "no clean verdict from: YARA" in capsys.readouterr().err
+
+
+def test_describe_isfile_oserror_is_hash(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "weird.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli.os.path, "isfile", lambda p: (_ for _ in ()).throw(OSError("stat")))
+    assert run(["describe", str(f)]) == 1  # not a usable file: hash lookup 404s
+    assert upload_reqs(requests) == []
+
+
+def test_describe_file_sha_oserror(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: (_ for _ in ()).throw(OSError("gone")))
+    assert run(["describe", str(f)]) == 1
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_scan_sha_oserror(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    monkeypatch.setattr(cli, "_sha256_file", lambda p: (_ for _ in ()).throw(OSError("gone")))
+    assert run(["scan", str(f)]) == 1
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_describe_upload_error_paths(monkeypatch, capsys, tmp_path):
+    f = tmp_path / "new.txt"
+    f.write_text("samples")
+    monkeypatch.setattr(
+        api,
+        "get_capabilities",
+        lambda *a, **k: (_ for _ in ()).throw(api.ClientError(404, "old server")),
+    )
+    monkeypatch.setattr(
+        api, "get_report", lambda *a, **k: (_ for _ in ()).throw(api.ClientError(404, "not found"))
+    )
+    monkeypatch.setattr(cli.os.path, "getsize", lambda p: (_ for _ in ()).throw(OSError("io")))
+    assert run(["describe", str(f)]) == 1
+    assert "cannot read" in capsys.readouterr().err
+    monkeypatch.setattr(cli.os.path, "getsize", lambda p: 7)
+    monkeypatch.setattr(
+        cli, "_upload", lambda *a, **k: (_ for _ in ()).throw(api.ClientError(0, "ws down"))
+    )
+    assert run(["describe", str(f)]) == 1
+    assert "ws down" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "_upload", lambda *a, **k: {"sha256": "a" * 64})
+    monkeypatch.setattr(
+        api,
+        "get_report",
+        lambda *a, **k: {"sha256": "a" * 64, "status": "done", "verdict": "clean", "engines": []},
+    )
+    assert run(["describe", str(f)]) == 0  # caps 404 -> {}: direct upload fallback
+
+
+def test_describe_pending_gets_note_and_exit_1(monkeypatch, capsys):
+    monkeypatch.setattr(
+        api,
+        "get_report",
+        lambda *a, **k: {
+            "sha256": "e" * 64,
+            "status": "pending",
+            "verdict": "pending",
+            "engines": [{"name": "ClamAV", "status": "scanning"}],
+        },
+    )
+    assert run(["describe", "--hash", "e" * 64]) == 1
+    captured = capsys.readouterr()
+    assert "scan still pending" in captured.err
+    assert "engines:   ClamAV" in captured.out
+
+
+def test_describe_engines_dicts_show_names(monkeypatch, capsys):
+    monkeypatch.setattr(
+        api,
+        "get_report",
+        lambda *a, **k: {
+            "sha256": "z" * 64,
+            "md5": "m",
+            "sha1": "s",
+            "file_name": "z.bin",
+            "size": 1,
+            "file_type": "data",
+            "verdict": "clean",
+            "status": "done",
+            "engines": [
+                {"name": "ClamAV (clamd)", "status": "done", "verdict": "clean"},
+                {"name": "YARA", "status": "done", "verdict": "clean"},
+            ],
+            "urls": [],
+        },
+    )
+    assert run(["describe", "--hash", "z" * 64]) == 0
+    out = capsys.readouterr().out
+    assert "engines:   ClamAV (clamd), YARA" in out
 
 
 def test_describe_human(monkeypatch, requests, capsys):

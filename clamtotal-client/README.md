@@ -22,10 +22,12 @@ While a file is being uploaded, a live progress line (`uploading sample.zip: 42%
 (4.2 MB of 10 MB, 1.8 MB/s, eta 3s)`) is redrawn in place on **stderr**; stdout
 stays clean for `--json` and piping. Use `--no-progress` to hide it.
 
-After the upload the client waits for the analysis to finish and prints the
-verdict (exit `2` when any enabled engine detects something, `1` when one
-never delivered a verdict, `0` only when they all finished clean).
-`--no-wait-result` skips the waiting and prints the upload response only.
+Files whose SHA-256 the server already knows (queued or analyzed) are not
+uploaded again unless `--rescan` is passed. After the upload the client waits
+for the analysis to finish and prints the verdict (exit `2` when any enabled
+engine detects something, `1` when one never delivered a verdict, `0` only
+when they all finished clean). `--no-wait-result` skips the waiting and
+prints the upload response only.
 
 ## Usage
 
@@ -37,8 +39,10 @@ clamtotal-client scan huge.iso --no-wait-result        # fire-and-forget (upload
 clamtotal-client scan suspicious.exe --engines clamav,yara   # run only the selected engines (default: all)
 clamtotal-client scan big.iso --no-progress    # hide the upload progress indicator
 
-# show the report for a known sample (GET /api/v2/files/{hash})
-clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
+# show the report for a local file or a known sample (GET /api/v2/files/{hash})
+clamtotal-client describe suspicious.exe                 # local file: hash lookup (uploads when unknown)
+clamtotal-client describe suspicious.exe --rescan       # re-analyze it
+clamtotal-client describe --hash 44d88612fea8a86fde9d2f7d4e5f4c6a --json  # hash only, never uploads
 
 # check a URL/domain against the domain feed (POST /api/v2/urls)
 clamtotal-client url example.com
@@ -64,7 +68,7 @@ Global options (apply to every command):
 
 | Option       | Description                                                                        |
 | ------------ | ---------------------------------------------------------------------------------- |
-| `--rescan`   | Force a re-analysis of an already-known sample                                     |
+| `--rescan`   | Force a re-analysis of an already-known sample (always uploads)                    |
 | `--ephemeral`| Do not persist the sample (deleted after the scan and one report view)              |
 | `--engines`  | Comma-separated engines to run: `clamav`, `yara`, `domain-feed` (default: all)    |
 | `--no-progress` | Hide the upload progress indicator on stderr (shown by default)           |
@@ -72,7 +76,10 @@ Global options (apply to every command):
 | `--wait`     | Max seconds to wait for the analysis (default: 300)                                 |
 | `--json`     | Print the raw JSON response(s) instead of the human-readable summary              |
 
-`describe` and `url` accept `--json` for raw output. `--json` combined with the
+`describe` accepts a local file path or `--hash`; a file is uploaded only when
+the server does not know its hash (or with `--rescan`). `--rescan --hash`
+cannot work - the daemon can only rescan what you upload - and fails fast.
+`describe` and `url` accept `--json` for raw output; `--json` combined with the
 result wait prints the final report as JSON.
 
 ## Configuration
