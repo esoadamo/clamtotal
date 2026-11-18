@@ -57,6 +57,28 @@ class Scan(Base):
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class ScanIoc(Base):
+    """Inverted index of one scan's IOC values (domains, IPs, emails, registry,
+    BTC). Written once per scan; the report page joins on it instead of loading
+    every scan row, so opening a report stays constant-time in the table size."""
+
+    __tablename__ = "scan_iocs"
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    token: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+
+
+class ScanEmbedded(Base):
+    """Parent/child pairs of the archive-embedding relation (one row per embedded
+    file). Indexed both ways: which archives contain a sample, and what a sample
+    contains. Doubles as the lookup path for the report's Relations tab."""
+
+    __tablename__ = "scan_embedded"
+
+    parent_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    child_sha256: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+
+
 class UrlScan(Base):
     """One checked URL/domain, keyed by its VT-style base64url id. Doubles as cache:
     re-checking the same URL refreshes the row instead of re-scanning."""

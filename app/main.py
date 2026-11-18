@@ -30,7 +30,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, or_, select
+from sqlalchemy import String, delete, insert, or_, select
 from sqlalchemy.orm import Session
 
 from app.analysis import (
@@ -52,7 +52,7 @@ from app.analysis import (
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.domain_feed import get_domain_feed, scan_url
-from app.models import Scan, UrlScan
+from app.models import Scan, ScanEmbedded, ScanIoc, UrlScan
 from app.scanner import (
     Scanner,
     ScannerTimeoutError,
@@ -121,6 +121,7 @@ def _recover_pending_scans() -> None:
                     target=_run_scan_file, args=(stored, scan.file_name), daemon=True
                 ).start()
             else:
+                _delete_scan_relations(db, scan.sha256)
                 db.delete(scan)
         db.commit()
     if pending:
@@ -296,6 +297,7 @@ def _prune_scans() -> None:
                 if _sample_in_use(row.sha256, db):  # a rescan got enqueued meanwhile
                     continue
                 (Path(settings.upload_dir) / row.sha256).unlink(missing_ok=True)
+                _delete_scan_relations(db, row.sha256)
                 db.delete(row)
         db.commit()
 
@@ -305,6 +307,46 @@ _rate_lock = threading.Lock()
 
 _scans_in_flight: dict[str, int] = {}
 _scans_in_flight_lock = threading.Lock()
+
+
+_IOC_TOKEN_MAX = 255
+
+
+def _ioc_tokens(iocs: dict | None) -> set[str]:
+    """Flatten IOC values into indexed-token form (the report Relations query joins
+    on these; write side and query side must truncate identically)."""
+    return {
+        v[:_IOC_TOKEN_MAX] for values in (iocs or {}).values() for v in values if isinstance(v, str)
+    }
+
+
+def _sync_scan_relations(
+    db: Session, sha256: str, iocs: dict | None, embedded: list[dict] | None
+) -> None:
+    """Keep the indexed relation tables (scan_iocs, scan_embedded) in sync with a
+    scan's JSON columns, so report pages never need a full-table scan to find
+    related files."""
+    db.execute(delete(ScanIoc).where(ScanIoc.sha256 == sha256))
+    db.execute(delete(ScanEmbedded).where(ScanEmbedded.parent_sha256 == sha256))
+    tokens = _ioc_tokens(iocs)
+    if tokens:
+        db.execute(insert(ScanIoc), [{"sha256": sha256, "token": t} for t in sorted(tokens)])
+    children = {
+        child_sha
+        for c in embedded or []
+        if isinstance(c, dict) and isinstance((child_sha := c.get("sha256")), str)
+    }
+    if children:
+        db.execute(
+            insert(ScanEmbedded),
+            [{"parent_sha256": sha256, "child_sha256": c} for c in sorted(children)],
+        )
+
+
+def _delete_scan_relations(db: Session, sha256: str) -> None:
+    """Drop a scan's indexed relation rows together with the scan row itself."""
+    db.execute(delete(ScanIoc).where(ScanIoc.sha256 == sha256))
+    db.execute(delete(ScanEmbedded).where(ScanEmbedded.parent_sha256 == sha256))
 
 
 def _scan_started(sha256: str) -> None:
@@ -671,6 +713,7 @@ def _scan_and_store(
     )
     for key, value in fields.items():
         setattr(scan, key, value)
+    _sync_scan_relations(db, scan.sha256, iocs, embedded)
     db.commit()
     (Path(settings.upload_dir) / scan.sha256).write_bytes(data)
     return scan, False
@@ -1194,22 +1237,60 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     # archive containing other scans) — all resolved locally by hash, VT-style
     relations: list[tuple[Scan, list[str]]] = []
     if not pending:
-        my_iocs = {v for values in (scan.iocs or {}).values() for v in values if isinstance(v, str)}
-        my_embedded = {c["sha256"] for c in scan.embedded or []}
-        for other in db.execute(select(Scan).where(Scan.sha256 != scan.sha256)).scalars():
-            reasons: list[str] = []
-            shared = sorted(
-                {v for values in (other.iocs or {}).values() for v in values if isinstance(v, str)}
-                & my_iocs
-            )
-            if shared:
-                reasons.append("shared indicators: " + ", ".join(shared[:3]))
-            if scan.sha256 in {c["sha256"] for c in other.embedded or []}:
-                reasons.append(f"embedded in {other.file_name}")
-            if other.sha256 in my_embedded:
-                reasons.append(f"contained in this archive ({other.file_name})")
-            if reasons:
-                relations.append((other, reasons))
+        # resolved via the indexed relation tables (scan_iocs, scan_embedded):
+        # a few indexed queries, never a walk over every scan row with its JSON
+        my_tokens = _ioc_tokens(scan.iocs)
+        shared_by_sha: dict[str, set[str]] = {}
+        for i in range(0, len(my_tokens), 500):
+            batch = list(my_tokens)[i : i + 500]
+            rows = db.execute(
+                select(ScanIoc.sha256, ScanIoc.token)
+                .where(ScanIoc.token.in_(batch), ScanIoc.sha256 != scan.sha256)
+                .order_by(ScanIoc.sha256)
+            ).all()
+            for other_sha, token in rows:
+                shared_by_sha.setdefault(other_sha, set()).add(token)
+        if shared_by_sha:
+            for other in (
+                db.execute(
+                    select(Scan)
+                    .where(Scan.sha256.in_(set(shared_by_sha)))
+                    .order_by(Scan.scanned_at.desc())
+                )
+                .scalars()
+                .all()
+            ):
+                shared = sorted(shared_by_sha[other.sha256])
+                relations.append((other, ["shared indicators: " + ", ".join(shared[:3])]))
+        parent_shas = {
+            row[0]
+            for row in db.execute(
+                select(ScanEmbedded.parent_sha256).where(
+                    ScanEmbedded.child_sha256 == scan.sha256,
+                    ScanEmbedded.parent_sha256 != scan.sha256,
+                )
+            ).all()
+        }
+        if parent_shas:
+            for other in (
+                db.execute(
+                    select(Scan)
+                    .where(Scan.sha256.in_(parent_shas))
+                    .order_by(Scan.scanned_at.desc())
+                )
+                .scalars()
+                .all()
+            ):
+                relations.append((other, [f"embedded in {other.file_name}"]))
+        my_embedded = {
+            c["sha256"] for c in (scan.embedded or []) if isinstance(c, dict) and "sha256" in c
+        }
+        if my_embedded:
+            for other in (
+                db.execute(select(Scan).where(Scan.sha256.in_(my_embedded))).scalars().all()
+            ):
+                relations.append((other, [f"contained in this archive ({other.file_name})"]))
+    relations = relations[:10]
     # live domain-feed verdicts for the extracted domains (Network tab), so each
     # domain shows whether it is listed; the link target caches a full URL scan
     domain_results: dict[str, list[dict]] = {}
@@ -1238,6 +1319,7 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
     # stored sample and the scan result row (unless a rescan of it is in flight)
     if scan.ephemeral and not pending and not _sample_in_use(scan.sha256, db):
         (Path(settings.upload_dir) / scan.sha256).unlink(missing_ok=True)
+        _delete_scan_relations(db, scan.sha256)
         db.delete(scan)
         db.commit()
     return response
