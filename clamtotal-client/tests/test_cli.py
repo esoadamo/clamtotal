@@ -20,6 +20,8 @@ def requests(monkeypatch):
     def fake_urlopen(req, timeout=None):
         seen.append(req)
         body = req.data or b""
+        if not isinstance(body, bytes):  # progress uploads stream an iterable body
+            body = b"".join(body)
         if "/api/v2/files/" in req.full_url and "e" * 64 in req.full_url:
             polls.append(1)
             resp = (
@@ -83,6 +85,11 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+def req_body(req):
+    data = req.data if req.data is not None else b""
+    return b"".join(data) if not isinstance(data, bytes) else data
+
+
 def run(argv, monkeypatch, requests):
     return cli.main(argv)
 
@@ -110,7 +117,7 @@ def test_scan_json_output(monkeypatch, requests, capsys, tmp_path):
     assert run(["scan", "--json", str(f)], monkeypatch, requests) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["sha256"] == "a" * 64
-    body = requests[0].data
+    body = req_body(requests[0])
     assert b'filename="clean.txt"' in body and b"hi" in body
     assert requests[0].headers["Content-type"].startswith("multipart/form-data; boundary=")
 
@@ -119,7 +126,7 @@ def test_scan_rescan_ephemeral_flags_in_body(monkeypatch, requests, tmp_path):
     f = tmp_path / "c.txt"
     f.write_text("hi")
     run(["scan", "--rescan", "--ephemeral", str(f)], monkeypatch, requests)
-    body = requests[0].data
+    body = req_body(requests[0])
     assert b'name="rescan"' in body and b'name="ephemeral"' in body
     assert b'name="engines"' not in body  # no selection -> all engines (default)
 
@@ -128,7 +135,7 @@ def test_scan_engines_selection_in_body(monkeypatch, requests, tmp_path):
     f = tmp_path / "c.txt"
     f.write_text("hi")
     run(["scan", "--engines", "clamav,yara", str(f)], monkeypatch, requests)
-    body = requests[0].data
+    body = req_body(requests[0])
     assert b'name="engines"' in body
     assert b"clamav,yara" in body
 
@@ -138,14 +145,14 @@ def test_scan_engines_env_fallback(monkeypatch, requests, tmp_path):
     f = tmp_path / "c.txt"
     f.write_text("hi")
     run(["scan", str(f)], monkeypatch, requests)  # no flag: env var applies
-    body = requests[0].data
+    body = req_body(requests[0])
     assert b'name="engines"' in body and b"yara" in body
     run(["scan", "--engines", "domain-feed", str(f)], monkeypatch, requests)
-    body = requests[1].data  # explicit flag overrides the env var
+    body = req_body(requests[1])  # explicit flag overrides the env var
     assert b"domain-feed" in body
     monkeypatch.delenv("CLAMTOTAL_ENGINES")
     run(["scan", str(f)], monkeypatch, requests)
-    assert b'name="engines"' not in requests[2].data  # unset -> all engines (default)
+    assert b'name="engines"' not in req_body(requests[2])  # unset -> all engines (default)
 
 
 def test_scan_human_output_and_wait(monkeypatch, requests, capsys, tmp_path):
@@ -252,6 +259,44 @@ def test_scan_wait_json(monkeypatch, requests, capsys, tmp_path):
     assert run(["scan", "--wait", "5", "--json", str(f)], monkeypatch, requests) == 2
     out = capsys.readouterr().out
     assert '"verdict": "infected"' in out
+
+
+def test_scan_shows_upload_progress_by_default(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "big.dat"
+    f.write_bytes(b"x" * (5 * 1024 * 1024))  # spans several 1 MB progress chunks
+    assert run(["scan", str(f)], monkeypatch, requests) == 0
+    err = capsys.readouterr().err
+    assert "uploading big.dat" in err
+    assert "100%" in err  # reaches the end of the body
+    assert "100% (5 MB of 5 MB)" in err  # multipart overhead included in the total
+
+
+def test_scan_no_progress_hides_indicator(monkeypatch, requests, capsys, tmp_path):
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    assert run(["scan", "--no-progress", str(f)], monkeypatch, requests) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_scan_progress_indented_on_client_error(monkeypatch, requests, capsys, tmp_path):
+    def fail(req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.full_url, 500, "Boom", email.message.Message(), FakeResponse(b"oops")
+        )
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fail)
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    assert run(["scan", str(f)], monkeypatch, requests) == 1
+    err = capsys.readouterr().err
+    # the transport failed before sending any body: only the newline + error show
+    assert "error: HTTP 500" in err and err.startswith("\nerror")
+
+
+def test_fmt_bytes_units():
+    assert cli._fmt_bytes(512) == "512 B"
+    assert cli._fmt_bytes(2048) == "2 KB"
+    assert cli._fmt_bytes(5 * 1024 * 1024 + 300_000) == "5.3 MB"
 
 
 def test_empty_response_body(monkeypatch, requests):

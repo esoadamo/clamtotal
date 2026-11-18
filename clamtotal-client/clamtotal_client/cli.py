@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--rescan", action="store_true", help="force a re-analysis")
     scan.add_argument("--ephemeral", action="store_true", help="do not persist the sample")
     scan.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="hide the upload progress indicator (shown on stderr by default)",
+    )
+    scan.add_argument(
         "--engines",
         metavar="IDS",
         help="comma-separated engines to run (clamav, yara, domain-feed; default: all; "
@@ -87,6 +92,33 @@ def _wait_for_verdict(args: argparse.Namespace, sha256: str) -> int:
         time.sleep(1.0)
 
 
+def _fmt_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    units = ("KB", "MB", "GB", "TB")
+    value, unit = float(n), -1
+    while value >= 1024 and unit < len(units) - 1:
+        value /= 1024
+        unit += 1
+    return f"{round(value, 1):g} {units[unit]}"
+
+
+def _progress_printer(path: str):
+    """Live 'uploading x.exe: 42% (4.2/10 MB)' line on stderr, redrawn in place."""
+    name = os.path.basename(path)
+
+    def report(sent: int, total: int) -> None:
+        pct = min(100, sent * 100 // max(total, 1))
+        print(
+            f"\ruploading {name}: {pct}% ({_fmt_bytes(sent)} of {_fmt_bytes(total)})",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return report
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     exit_code = 0
     for path in args.file:
@@ -97,6 +129,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"error: cannot read {path}: {exc}", file=sys.stderr)
             exit_code = 1
             continue
+        show_progress = not args.no_progress
         try:
             result = api.post_file(
                 args.base_url,
@@ -108,11 +141,16 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 rescan=args.rescan,
                 ephemeral=args.ephemeral,
                 engines=_opt(args.engines, "CLAMTOTAL_ENGINES", None) or "",
+                progress=_progress_printer(path) if show_progress else None,
             )
         except api.ClientError as exc:
+            if show_progress:
+                print(file=sys.stderr, flush=True)  # close the progress line
             print(f"error: {exc}", file=sys.stderr)
             exit_code = 1
             continue
+        if show_progress:
+            print(file=sys.stderr, flush=True)  # close the progress line
         _print_scan_result(result, args.json)
         if args.wait is not None and result.get("status") != "done":
             exit_code = exit_code or _wait_for_verdict(args, result["sha256"])

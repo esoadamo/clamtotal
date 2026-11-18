@@ -11,6 +11,10 @@ uv tool install "git+https://github.com/esoadamo/clamtotal.git#subdirectory=clam
 Zero runtime dependencies (stdlib only), so it installs and runs fully airgapped.
 A local clone can also be installed with `uv tool install ./clamtotal-client`.
 
+While a file is being uploaded, a live progress line (`uploading sample.zip: 42%
+(4.2 MB of 10 MB)`) is redrawn in place on **stderr**; stdout stays clean for
+`--json` and piping. Use `--no-progress` to hide it.
+
 ## Usage
 
 ```sh
@@ -18,6 +22,7 @@ A local clone can also be installed with `uv tool install ./clamtotal-client`.
 clamtotal-client scan suspicious.exe
 clamtotal-client scan sample.zip --rescan --wait 120   # poll until done, exit 2 if infected
 clamtotal-client scan suspicious.exe --engines clamav,yara   # run only the selected engines (default: all)
+clamtotal-client scan big.iso --no-progress    # hide the upload progress indicator
 
 # show the report for a known sample (GET /api/v2/files/{hash})
 clamtotal-client describe 44d88612fea8a86fde9d2f7d4e5f4c6a --json
@@ -46,6 +51,7 @@ Global options (apply to every command):
 | `--rescan`   | Force a re-analysis of an already-known sample                                     |
 | `--ephemeral`| Do not persist the sample (deleted after the scan and one report view)              |
 | `--engines`  | Comma-separated engines to run: `clamav`, `yara`, `domain-feed` (default: all)    |
+| `--no-progress` | Hide the upload progress indicator on stderr (shown by default)           |
 | `--wait`     | Poll until the analysis finishes (max seconds), then print the verdict             |
 | `--json`     | Print the raw JSON response(s) instead of the human-readable summary              |
 

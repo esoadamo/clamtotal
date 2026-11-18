@@ -49,6 +49,27 @@ def _request(
     return json.loads(body)
 
 
+PROGRESS_CHUNK = 1024 * 1024
+
+
+class _ProgressBody:
+    """Multipart request body that reports (bytes_sent, total) back as http.client
+    streams the iterator chunk by chunk. total counts the multipart overhead too,
+    so progress reaches 100% exactly when the last byte leaves the client."""
+
+    def __init__(self, parts: list[bytes], progress) -> None:
+        self._parts = parts
+        self.total = sum(len(p) for p in parts)
+        self._progress = progress
+
+    def __iter__(self):
+        sent = 0
+        for part in self._parts:
+            yield part
+            sent += len(part)
+            self._progress(sent, self.total)
+
+
 def post_file(
     base_url: str,
     path: str,
@@ -60,6 +81,7 @@ def post_file(
     rescan: bool = False,
     ephemeral: bool = False,
     engines: str = "",
+    progress=None,
 ) -> dict:
     boundary = f"----clamtotal-client-{uuid.uuid4().hex}"
     parts = []
@@ -78,16 +100,21 @@ def post_file(
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
         f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode()
     )
-    parts.append(content)
-    parts.append(f"\r\n--{boundary}--\r\n".encode())
-    return _request(
-        base_url,
-        path,
-        token=token,
-        timeout=timeout,
-        data=b"".join(parts),
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    # the file itself goes out in 1 MB slices so the progress callback fires often
+    parts.extend(
+        content[i : i + PROGRESS_CHUNK] for i in range(0, max(len(content), 1), PROGRESS_CHUNK)
     )
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    if progress is None:
+        return _request(
+            base_url, path, token=token, timeout=timeout, data=b"".join(parts), headers=headers
+        )
+    body = _ProgressBody(parts, progress)
+    # urllib/http.client would fall back to chunked encoding for an iterator body;
+    # the server accepts that, but an explicit Content-Length is more compatible
+    headers["Content-Length"] = str(body.total)
+    return _request(base_url, path, token=token, timeout=timeout, data=body, headers=headers)
 
 
 def post_url(
