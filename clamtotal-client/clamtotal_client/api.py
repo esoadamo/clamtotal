@@ -5,6 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Iterable
 
 DEFAULT_URL = "https://clamtotal.com"
 DEFAULT_TIMEOUT = 60.0
@@ -23,7 +24,7 @@ def _request(
     *,
     token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
-    data: bytes | None = None,
+    data: bytes | Iterable[bytes] | None = None,
     headers: dict[str, str] | None = None,
 ) -> dict:
     url = base_url.rstrip("/") + path
