@@ -192,7 +192,6 @@ def test_report_legacy_row_shows_unknown_entropy_without_reading_sample(client):
 def test_report_of_pending_scan_never_reads_the_sample(client):
     """A pending row has no entropy yet; the report page must not fall back to
     reading the sample from disk (that made opening a report O(file size))."""
-    from app.config import settings
     from app.db import SessionLocal
     from app.models import Scan
 
