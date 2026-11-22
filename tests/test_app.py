@@ -194,6 +194,46 @@ def test_report_legacy_row_without_sample_shows_zero_entropy(client):
         assert scan.entropy is None
 
 
+def test_report_of_pending_scan_never_reads_the_sample(client, monkeypatch):
+    """A pending row has no entropy yet; the report page must not fall back to
+    reading the sample from disk (that made opening a report O(file size))."""
+    import app.main as main_mod
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    content = b"pending scan whose report must not read the sample"
+    sha256 = hashlib.sha256(content).hexdigest()
+    sample = Path(settings.upload_dir) / sha256
+    sample.parent.mkdir(exist_ok=True)
+    sample.write_bytes(content)
+    with SessionLocal() as db:
+        db.add(
+            Scan(
+                sha256=sha256,
+                md5=hashlib.md5(content).hexdigest(),
+                sha1=hashlib.sha1(content).hexdigest(),
+                file_name="pending.bin",
+                size=len(content),
+                file_type="ASCII text",
+                magic_hex="",
+                verdict="pending",
+                status="pending",
+                engine="clamscan",
+                urls=[],
+            )
+        )
+        db.commit()
+
+    def forbidden(path, chunk_size=1024 * 1024):
+        raise AssertionError("report rendering read the sample from disk")
+
+    monkeypatch.setattr(main_mod, "shannon_entropy_file", forbidden)
+    report = client.get(f"/ui/file/{sha256}")
+    assert report.status_code == 200
+    assert "0.000" in report.text
+
+
 def test_upload_capabilities(client, monkeypatch):
     from app.config import settings
 
