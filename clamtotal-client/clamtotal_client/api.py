@@ -125,7 +125,9 @@ def _post_multipart(
     payload_total: int | None = None,
 ) -> dict:
     boundary = f"----clamtotal-client-{uuid.uuid4().hex}"
-    parts: list[tuple[bytes, bool]] = [(f"--{boundary}\r\n".encode(), False)]
+    parts: list[tuple[bytes, bool]] = []  # (bytes, is payload): each field and the
+    # file header already carry their own --boundary openers; nothing extra here,
+    # an opener without a header/body is a malformed multipart server-side
     for name, value in fields:
         parts.append((_form_field(boundary, name, value), False))
     parts.append(
@@ -254,9 +256,10 @@ def _mask_data(data: bytes, mask: bytes) -> bytes:
 
 
 class _WsFrame:
-    def __init__(self, opcode: int, payload: bytes) -> None:
+    def __init__(self, opcode: int, payload: bytes, fin: bool = True) -> None:
         self.opcode = opcode
         self.payload = payload
+        self.fin = fin
 
 
 class _WsTransport(Protocol):
@@ -287,18 +290,61 @@ class _WsConnection:
         head, _, self._buf = self._buf.partition(b"\r\n\r\n")
         return head.decode("latin-1")
 
-    def recv_frame(self) -> _WsFrame:
+    def _read_frame(self) -> _WsFrame:
+        """One raw frame off the wire: header, optional extended length, payload."""
         header = self._recv_exact(2)
+        fin = bool(header[0] & 0x80)
         opcode = header[0] & 0x0F
         length = header[1] & 0x7F
         if length == 126:
             length = struct.unpack(">H", self._recv_exact(2))[0]
         elif length == 127:
             length = struct.unpack(">Q", self._recv_exact(8))[0]
-        payload = self._recv_exact(length)
-        if opcode == 8:  # close
+        return _WsFrame(opcode, self._recv_exact(length), fin=fin)
+
+    def recv_frame(self) -> _WsFrame:
+        """One complete message, transparently handling server keepalive:
+        uvicorn pings the socket every ws_ping_interval (20s) with a four random
+        bytes payload and kills the connection when no pong arrives within
+        ws_ping_timeout — a slow upload ALWAYS straddles that window, so pings
+        must be answered here. Pongs are ignored; fragmented messages
+        (FIN=0 + continuation frames) are reassembled."""
+        frame = self._read_frame()
+        while frame.opcode in (9, 10):  # server keepalive ping / our pong echo
+            if frame.opcode == 9:
+                self.send_frame(0xA, frame.payload)
+            frame = self._read_frame()
+        if frame.opcode == 8:  # close
             raise ClientError(0, "websocket closed by server")
-        return _WsFrame(opcode, payload)
+        return frame if frame.fin else self._reassemble(frame)
+
+    def _reassemble(self, first: _WsFrame) -> _WsFrame:
+        parts = [first.payload]
+        while True:
+            frame = self._read_frame()
+            if frame.opcode == 9:  # keepalive pings may interleave a message
+                self.send_frame(0xA, frame.payload)
+                continue
+            if frame.opcode == 10:
+                continue
+            parts.append(frame.payload)
+            if frame.fin:
+                return _WsFrame(first.opcode, b"".join(parts))
+
+    def recv_json(self) -> dict:
+        """One control message: a TEXT frame carrying a JSON object. Every
+        transport-level surprise raises ClientError, so a broken or hostile
+        reply never leaks a traceback to the user."""
+        frame = self.recv_frame()
+        if frame.opcode != 1:
+            raise ClientError(0, f"unexpected websocket frame type {frame.opcode}")
+        try:
+            ctrl = json.loads(frame.payload)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ClientError(0, f"malformed websocket message: {exc}") from exc
+        if not isinstance(ctrl, dict):
+            raise ClientError(0, f"malformed websocket message: {ctrl!r}")
+        return ctrl
 
     def _recv_exact(self, n: int) -> bytes:
         while len(self._buf) < n:
@@ -404,10 +450,7 @@ def upload_ws(
         )
         received: set[int] = set()
         while True:
-            frame = conn.recv_frame()
-            if frame.opcode != 1:
-                raise ClientError(0, f"unexpected websocket frame type {frame.opcode}")
-            ctrl = json.loads(frame.payload)
+            ctrl = conn.recv_json()
             kind = ctrl.get("type")
             if kind == "ready":
                 received = {int(i) for i in ctrl.get("received", [])}
@@ -426,14 +469,14 @@ def upload_ws(
                 1, json.dumps({"type": "chunk", "index": index, "size": len(chunk)}).encode()
             )
             conn.send_frame(2, chunk)
-            ack = json.loads(conn.recv_frame().payload)
+            ack = conn.recv_json()
             if ack.get("type") == "error":
                 raise ClientError(0, str(ack.get("detail", "websocket upload failed")))
             if ack.get("type") != "ack" or int(ack.get("index", -1)) != index:
                 raise ClientError(0, f"unexpected websocket ack for chunk {index}")
             if progress:
                 progress(min(offset + len(chunk), size), size)
-        done = json.loads(conn.recv_frame().payload)
+        done = conn.recv_json()
         if done.get("type") == "error":
             raise ClientError(0, str(done.get("detail", "websocket upload failed")))
         if done.get("type") != "done":

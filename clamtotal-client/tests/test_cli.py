@@ -1238,3 +1238,121 @@ def test_ws_close_swallows_failures(monkeypatch):
     conn = api._WsConnection(sock)
     conn.close()  # must not raise on either failure
     assert sock.closed is False  # close() raised before the flag flip
+
+
+def raw_frame(fin: bool, opcode: int, payload: bytes) -> bytes:
+    """Server->client frame with an explicit FIN bit (for fragmentation tests)."""
+    assert len(payload) < 126
+    return bytes([(0x80 if fin else 0) | opcode, len(payload)]) + payload
+
+
+def test_ws_keepalive_pings_are_answered(monkeypatch, tmp_path):
+    """The real-world failure: uvicorn pings every 20s with 4 random bytes and
+    closes the socket when no pong arrives. A slow upload always sees them."""
+    f = tmp_path / "ws.bin"
+    f.write_bytes(b"ab")
+    recv = [
+        sframe(b"\xa3\xdf\x12\x34", opcode=9),  # ping lands before 'ready'
+        sframe(json.dumps({"type": "ready", "received": []}).encode()),
+        sframe(b"\x01\x02", opcode=9),  # and between the chunks
+        sframe(json.dumps({"type": "ack", "index": 0, "received": 1}).encode()),
+        sframe(json.dumps({"type": "done", "sha256": "0" * 64, "cached": False}).encode()),
+    ]
+    sock = FakeSock([HANDSHAKE, *recv])
+    _patch_connect(monkeypatch, sock)
+    with open(f, "rb") as fh:
+        result = api.upload_ws("http://s", fh, "ws.bin", 2, "0" * 64, 4)
+    assert result["sha256"] == "0" * 64
+    frames = client_frames(sock.sent)
+    pongs = [payload for opcode, payload in frames if opcode == 0xA]
+    assert pongs == [b"\xa3\xdf\x12\x34", b"\x01\x02"]  # echo the ping payload
+    assert frames[-1][0] == 8  # close frame last
+
+
+def test_ws_unsolicited_pong_is_ignored(monkeypatch, tmp_path):
+    f = tmp_path / "ws.bin"
+    f.write_bytes(b"ab")
+    recv = [
+        sframe(b"whatever", opcode=10),  # unsolicited pong: skip it
+        sframe(json.dumps({"type": "ready", "received": []}).encode()),
+        sframe(json.dumps({"type": "ack", "index": 0, "received": 1}).encode()),
+        sframe(json.dumps({"type": "done", "sha256": "0" * 64, "cached": True}).encode()),
+    ]
+    sock = FakeSock([HANDSHAKE, *recv])
+    _patch_connect(monkeypatch, sock)
+    with open(f, "rb") as fh:
+        assert api.upload_ws("http://s", fh, "ws.bin", 2, "0" * 64, 4)["cached"] is True
+
+
+def test_ws_fragmented_control_message(monkeypatch, tmp_path):
+    f = tmp_path / "ws.bin"
+    f.write_bytes(b"ab")
+    ready = json.dumps({"type": "ready", "received": []}).encode()
+    recv = [
+        raw_frame(False, 1, ready[:5]),  # FIN=0: first fragment
+        raw_frame(True, 0, ready[5:]),  # continuation, FIN=1
+        sframe(json.dumps({"type": "ack", "index": 0, "received": 1}).encode()),
+        sframe(json.dumps({"type": "done", "sha256": "0" * 64, "cached": False}).encode()),
+    ]
+    sock = FakeSock([HANDSHAKE, *recv])
+    _patch_connect(monkeypatch, sock)
+    with open(f, "rb") as fh:
+        api.upload_ws("http://s", fh, "ws.bin", 2, "0" * 64, 4)
+    assert [op for op, _ in client_frames(sock.sent)][-1] == 8
+
+
+def test_ws_ping_between_message_fragments(monkeypatch, tmp_path):
+    f = tmp_path / "ws.bin"
+    f.write_bytes(b"ab")
+    ready = json.dumps({"type": "ready", "received": []}).encode()
+    recv = [
+        raw_frame(False, 1, ready[:5]),
+        sframe(b"x", opcode=9),  # ping inside the fragmented message
+        sframe(b"y", opcode=10),  # and a stray pong: pongs never feed a message
+        raw_frame(True, 0, ready[5:]),
+        sframe(json.dumps({"type": "ack", "index": 0, "received": 1}).encode()),
+        sframe(json.dumps({"type": "done", "sha256": "0" * 64, "cached": False}).encode()),
+    ]
+    sock = FakeSock([HANDSHAKE, *recv])
+    _patch_connect(monkeypatch, sock)
+    with open(f, "rb") as fh:
+        api.upload_ws("http://s", fh, "ws.bin", 2, "0" * 64, 4)
+    pongs = [payload for opcode, payload in client_frames(sock.sent) if opcode == 0xA]
+    assert pongs == [b"x"]
+
+
+def test_ws_malformed_json_is_a_client_error(monkeypatch, tmp_path):
+    for bad in (b"{oops", json.dumps([1, 2]).encode()):
+        sock = FakeSock([HANDSHAKE, sframe(bad)])
+        _patch_connect(monkeypatch, sock)
+        f = tmp_path / "ws.bin"
+        f.write_bytes(b"ab")
+        with open(f, "rb") as fh, pytest.raises(api.ClientError) as exc:
+            api.upload_ws("http://s", fh, "ws.bin", 2, "0" * 64, 4)
+        assert "malformed websocket message" in str(exc.value)
+
+
+def test_upload_multipart_wire_format(monkeypatch, requests, tmp_path):
+    """The exact bytes on the wire, as python-multipart expects them —
+    a regression here (e.g. a stray boundary opener) only shows up against a
+    real server, where substring checks pass but the request is rejected."""
+    f = tmp_path / "c.txt"
+    f.write_text("hi")
+    run(["scan", "--rescan", "--engines", "clamav", "--no-wait-result", str(f)])
+    req = upload_reqs(requests)[0]
+    boundary = req.headers["Content-type"].split("boundary=")[1]
+    body = req_body(req)
+    assert (
+        body
+        == (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="rescan"\r\n\r\ntrue\r\n'
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="engines"\r\n\r\nclamav\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="c.txt"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\nhi\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+    )
+    assert int(req.headers["Content-length"]) == len(body)
