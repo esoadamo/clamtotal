@@ -158,55 +158,46 @@ def _legacy_scan(sha256: str, content: bytes) -> None:
         db.commit()
 
 
-def test_report_legacy_row_computes_and_persists_entropy(client):
+def test_report_legacy_row_shows_unknown_entropy_without_reading_sample(client):
+    """Rows from before the entropy column existed never gain a stored value; the
+    report shows — and must not reconstruct it by reading the sample from disk."""
     from app.config import settings
     from app.db import SessionLocal
     from app.models import Scan
 
-    content = b"legacy row without stored entropy"
+    content = b"legacy row scanned before the entropy column existed"
     sha256 = hashlib.sha256(content).hexdigest()
     _legacy_scan(sha256, content)
     sample = Path(settings.upload_dir) / sha256
     sample.parent.mkdir(exist_ok=True)
     sample.write_bytes(content)
-    report = client.get(f"/ui/file/{sha256}")
-    assert report.status_code == 200
-    with SessionLocal() as db:
-        scan = db.get(Scan, sha256)
-        assert scan is not None
-        assert scan.entropy is not None
-        assert scan.entropy == pytest.approx(shannon_entropy(content))
 
+    def forbidden(path, chunk_size=1024 * 1024):
+        raise AssertionError("report rendering read the sample from disk")
 
-def test_report_legacy_row_without_sample_shows_zero_entropy(client):
-    from app.db import SessionLocal
-    from app.models import Scan
-
-    content = b"legacy row whose sample expired"
-    sha256 = hashlib.sha256(content).hexdigest()
-    _legacy_scan(sha256, content)
-    report = client.get(f"/ui/file/{sha256}")
-    assert report.status_code == 200
-    assert "0.000" in report.text
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.analysis.shannon_entropy_file", forbidden)
+    try:
+        report = client.get(f"/ui/file/{sha256}")
+        assert report.status_code == 200
+        assert "<dt>Entropy</dt><dd>\u2014</dd>" in report.text
+    finally:
+        monkeypatch.undo()
     with SessionLocal() as db:
         scan = db.get(Scan, sha256)
         assert scan is not None
         assert scan.entropy is None
 
 
-def test_report_of_pending_scan_never_reads_the_sample(client, monkeypatch):
+def test_report_of_pending_scan_never_reads_the_sample(client):
     """A pending row has no entropy yet; the report page must not fall back to
     reading the sample from disk (that made opening a report O(file size))."""
-    import app.main as main_mod
     from app.config import settings
     from app.db import SessionLocal
     from app.models import Scan
 
     content = b"pending scan whose report must not read the sample"
     sha256 = hashlib.sha256(content).hexdigest()
-    sample = Path(settings.upload_dir) / sha256
-    sample.parent.mkdir(exist_ok=True)
-    sample.write_bytes(content)
     with SessionLocal() as db:
         db.add(
             Scan(
@@ -224,14 +215,9 @@ def test_report_of_pending_scan_never_reads_the_sample(client, monkeypatch):
             )
         )
         db.commit()
-
-    def forbidden(path, chunk_size=1024 * 1024):
-        raise AssertionError("report rendering read the sample from disk")
-
-    monkeypatch.setattr(main_mod, "shannon_entropy_file", forbidden)
     report = client.get(f"/ui/file/{sha256}")
     assert report.status_code == 200
-    assert "0.000" in report.text
+    assert "<dt>Entropy</dt><dd>\u2014</dd>" in report.text
 
 
 def test_upload_capabilities(client, monkeypatch):

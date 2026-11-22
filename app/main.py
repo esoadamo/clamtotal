@@ -46,7 +46,6 @@ from app.analysis import (
     parse_pdf,
     parse_pe,
     shannon_entropy,
-    shannon_entropy_file,
     sniff_file_type,
 )
 from app.config import settings
@@ -1223,20 +1222,11 @@ def report(request: Request, hash_value: str, db: Session = Depends(get_db)) -> 
         )
     stored = Path(settings.upload_dir) / scan.sha256
     stored_exists = stored.exists()
+    # entropy is computed once at scan time and cached in the DB; rows from before
+    # the entropy column existed (and pending rows) have none — the report never
+    # reads the sample back to reconstruct it, so rendering stays O(1)
+    entropy = scan.entropy
     pending = scan.status != "done"
-    if scan.entropy is not None:
-        entropy = scan.entropy
-    elif not pending and stored_exists:
-        # legacy row scanned before the entropy column existed: compute once
-        # from the stored sample, persist, never re-read the file for it again.
-        # Pending rows have no entropy yet — it is filled by the scan itself at
-        # finalize, so never read the file for them: report rendering must stay
-        # O(1) regardless of sample size.
-        entropy = shannon_entropy_file(stored)
-        scan.entropy = entropy
-        db.commit()
-    else:
-        entropy = 0.0
     # relations: shared IOCs + archive membership (this file embedded in another scan, or this
     # archive containing other scans) — all resolved locally by hash, VT-style
     relations: list[tuple[Scan, list[str]]] = []

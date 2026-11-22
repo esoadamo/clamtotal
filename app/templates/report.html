@@ -102,7 +102,7 @@
       <dt>File size</dt><dd>{{ scan.size }} bytes</dd>
       <dt>File type</dt><dd>{{ scan.file_type }}</dd>
       <dt>Magic</dt><dd class="mono">{{ scan.magic_hex }}</dd>
-      <dt>Entropy</dt><dd>{{ "%.3f" | format(entropy) }}</dd>
+      <dt>Entropy</dt><dd>{% if entropy is none %}—{% else %}{{ "%.3f" | format(entropy) }}{% endif %}</dd>
     </dl>
     <h2 class="section-title" style="margin-top:20px">Hashes</h2>
     <dl class="kv">
