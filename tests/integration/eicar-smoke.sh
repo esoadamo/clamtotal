@@ -34,6 +34,23 @@ done
 [ "$ready" = "1" ] || { echo "[it] FATAL: container did not become ready"; "$RUNTIME" logs "$NAME"; exit 1; }
 echo "[it] container is up."
 
+# The image ships a HEALTHCHECK against /healthz (status must be "ok"): wait until
+# the runtime reports the container healthy, proving the probe passes in the image.
+echo "[it] waiting for the container healthcheck to report healthy..."
+hstatus=""
+for _ in $(seq 1 30); do
+  hstatus=$("$RUNTIME" inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$NAME" 2>/dev/null || echo error)
+  [ "$hstatus" = "healthy" ] && break
+  sleep 2
+done
+if [ "$hstatus" != "healthy" ]; then
+  echo "[it] FATAL: healthcheck did not report healthy (status=$hstatus)"
+  "$RUNTIME" inspect --format '{{json .State.Health}}' "$NAME" || true
+  "$RUNTIME" logs "$NAME"
+  exit 1
+fi
+echo "[it] healthcheck status: $hstatus"
+
 EICAR=/tmp/eicar.com
 printf '%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$EICAR"
 md5=$(md5sum "$EICAR" | cut -d' ' -f1)

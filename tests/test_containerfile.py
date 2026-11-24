@@ -346,6 +346,39 @@ def test_containerignore_present_and_covers_secrets():
         assert pattern in ci, pattern
 
 
+def test_container_healthcheck_and_selfheal():
+    cf = (ROOT / "Containerfile").read_text()
+    # the image ships a HEALTHCHECK against the app's own /healthz; HTTP 200 alone
+    # is not enough (/healthz returns 200 even when "degraded"), so the body must
+    # contain status "ok" — at least one scan engine ready
+    assert "HEALTHCHECK" in cf
+    assert "http://127.0.0.1:8000/healthz" in cf
+    assert '"status": *"ok"' in cf
+    for opt in ("--interval=", "--timeout=", "--start-period=", "--retries="):
+        assert opt in cf
+    # the probe needs curl, which the image installs via apt
+    assert re.search(r"apt-get install[^&]*\bcurl\b", cf)
+    # the start period must cover first-launch signature download + clamd DB load,
+    # which happen before uvicorn starts serving /healthz
+    assert "--start-period=300s" in cf
+    compose = (ROOT / "compose.yaml").read_text()
+    # compose repeats the probe (podman build with the default OCI format DROPS the
+    # image HEALTHCHECK, so the image alone does not cover podman-built images)
+    assert "healthcheck:" in compose and "/healthz" in compose
+    # (YAML-escaped quotes in the compose file)
+    assert r"\"status\": *\"ok\"" in compose and "start_period:" in compose
+    # self-heal: the Podman autoheal label makes an unhealthy container restart itself
+    # (equivalent to `podman run --health-on-failure restart`); crash recovery stays
+    assert 'io.containers.autoheal: "true"' in compose
+    assert "restart: unless-stopped" in compose
+    # documented for plain podman run users
+    readme = (ROOT / "README.md").read_text()
+    assert "--health-on-failure restart" in readme and "io.containers.autoheal" in readme
+    # the integration smoke test boots the real image and must also see it healthy
+    script = (ROOT / "tests" / "integration" / "eicar-smoke.sh").read_text()
+    assert "State.Health.Status" in script and "healthy" in script
+
+
 def test_airgapped_autoupdate_default_and_baked_feed():
     cf = (ROOT / "Containerfile").read_text()
     ep = (ROOT / "container-entrypoint.sh").read_text()

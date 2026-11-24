@@ -92,5 +92,17 @@ RUN chmod +x /usr/local/bin/container-entrypoint.sh \
     && date -u +%y%m%d.%H%M%S > /app/.build-version  # build timestamp shown as the app version
 
 EXPOSE 8000
+
+# Self-heal probe: healthy only while the app answers /healthz with status "ok"
+# (at least one scan engine ready). HTTP 200 alone is not enough - /healthz
+# returns 200 even when degraded, so the body is checked. Podman restarts an
+# unhealthy container when run with --health-on-failure restart / the
+# io.containers.autoheal label (compose.yaml sets the label). NOTE: podman build
+# with the default OCI format DROPS this instruction (docker format keeps it;
+# CI builds with Docker) - compose.yaml repeats the probe in healthcheck: for
+# that reason.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8000/healthz | grep -q '"status": *"ok"' || exit 1
+
 VOLUME ["/data", "/rules"]
 ENTRYPOINT ["container-entrypoint.sh"]

@@ -244,8 +244,12 @@ def test_chunked_upload_rejects_bad_input(client, monkeypatch):
 
 
 def test_healthz(client):
-    body = client.get("/healthz").json()
+    r = client.get("/healthz")
+    body = r.json()
     assert body["status"] == "ok"
+    # the container HEALTHCHECK greps for exactly these compact bytes in the body
+    # (/healthz always returns HTTP 200, even when degraded)
+    assert '"status":"ok"' in r.text
     clam, yara_eng, bl_eng = body["engines"]
     assert clam["type"] == "clamav" and clam["enabled"] and clam["ready"]
     assert clam["name"] == "ClamAV (fake)" and clam["version"] == "ClamAV 1.0.0 (fake)"

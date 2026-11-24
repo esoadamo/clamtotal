@@ -38,6 +38,20 @@ services:
     # If workers/daemon get OOM-killed ("Child process died" with no traceback),
     # raise this or trim container/yara-rules-sources.conf.
     # mem_limit: 8g
+    # Same probe as the HEALTHCHECK in the Containerfile, repeated here because
+    # `podman build` with the default OCI format drops the image HEALTHCHECK.
+    # Healthy only while /healthz reports "ok" (at least one scan engine ready).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/healthz | grep -q '\"status\": *\"ok\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s  # first launch downloads signatures + clamd loads them before uvicorn starts
+    labels:
+      # Podman self-heal: restart the container when the healthcheck marks it
+      # unhealthy (equivalent to `podman run --health-on-failure restart`;
+      # other runtimes ignore the label). restart: below still covers crashes.
+      io.containers.autoheal: "true"
     restart: unless-stopped
 
 volumes:

@@ -43,6 +43,25 @@ route to the internet, so the container stays offline. Rootless Podman still
 forwards published ports; rootful Podman does not. To move the image to
 another machine, use `podman save -o file.tar` and `podman load -i file.tar`.
 
+## Health check and self-healing
+
+The image ships a `HEALTHCHECK` that curls `http://127.0.0.1:8000/healthz` every
+30 s and only reports healthy while the JSON status is `"ok"` (at least one scan
+engine ready — a dead clamd makes it `"degraded"`, which counts as unhealthy).
+`compose.yaml` repeats the probe in its `healthcheck:` key (a `podman build`
+with the default OCI format drops the image `HEALTHCHECK`, so the compose key is
+what applies for locally built images) and sets the `io.containers.autoheal`
+label, so Podman restarts the container when it turns unhealthy. With a plain
+`podman run`, pass the on-failure action explicitly:
+
+```sh
+podman run -p 127.0.0.1:8000:8000 -v clamtotal-data:/data -v clamav-db:/var/lib/clamav \
+  --health-on-failure restart ghcr.io/esoadamo/clamtotal:latest
+```
+
+Inspect the state with `podman ps` (shows `(healthy)` / `(unhealthy)`) or
+`podman inspect --format '{{.State.Health.Status}}' clamtotal`.
+
 ## CLI client
 
 A standalone CLI lives in [`clamtotal-client/`](clamtotal-client/README.md).
